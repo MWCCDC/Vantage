@@ -434,7 +434,7 @@
 
                 <!-- Recovery vs Top Team -->
                 {% if ir_top_recovery_pct is not none and team_recovery_pct is not none %}
-                {% set top_delta = team_recovery_pct - ir_top_recovery_pct %}
+                {% set top_delta = (team_recovery_pct - ir_top_recovery_pct)|round(1) %}
                 <div class="stat-card">
                     <div class="stat-icon">🏆</div>
                     <div class="stat-content">

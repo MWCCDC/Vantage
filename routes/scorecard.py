@@ -926,8 +926,8 @@ def build_scorecard_pdf(display_name, selected_stats, selected_red,
 
         if (ir_recovery_benchmark is not None and team_pct is not None
                 and ir_top_recovery_pct is not None):
-            recovery_delta = team_pct - ir_recovery_benchmark
-            top_delta = team_pct - ir_top_recovery_pct
+            recovery_delta = round(team_pct - ir_recovery_benchmark, 1)
+            top_delta = round(team_pct - ir_top_recovery_pct, 1)
 
             if team_pct >= 90:
                 pct_color = '#28a745'
