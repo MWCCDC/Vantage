@@ -8,13 +8,12 @@ views of the data agree. Do not reimplement this logic elsewhere.
 """
 
 import json
+from collections import Counter
 
 from flask import current_app
 from sqlalchemy import func
 
 from models import db, Team, Score
-from routes.redConfig import calculate_red_team_scores
-from routes.orangeConfig import calculate_orange_team_scores
 from utils.valkey_client import get_valkey_client
 
 # Canonical category keys used in standings output
@@ -124,6 +123,331 @@ def get_ir_recovery_percent(team_id):
 
     # Normal case: points conceded (negative red) and points recovered (positive IR)
     return (abs(ir) / abs(red)) * 100, 'normal'
+
+def calculate_red_team_scores(scoring_data):
+    """
+    Calculates red/IR team scores based on the stored configuration.
+
+    Only ACTIVE teams participate: inactive teams are excluded from the
+    per-team calculations, the min/max normalization range, and the
+    high/low/average/median/mode statistics. A team deactivated mid-event
+    can therefore no longer skew every other team's normalized red score.
+
+    Args:
+        scoring_data: Dictionary containing scoring configuration
+                      (weights, ranges, etc.)
+
+    Returns:
+        tuple: (list of team dicts sorted by final score desc,
+                dict of normalization stats including average, median,
+                mode, highScore, lowScore)
+    """
+    if not scoring_data:
+        return [], {}
+
+    # Extract config values
+    enable_ranges = scoring_data.get('enable_ranges', False)
+    attack_weight = scoring_data.get('attack_weight', 1.0) if scoring_data.get('attack_weight') is not None else 1.0
+    ir_weight = scoring_data.get('incident_response_weight', 1.0) if scoring_data.get('incident_response_weight') is not None else 1.0
+    range_min = scoring_data.get('range', {}).get('min', -100000) if scoring_data.get('range') else -100000
+    range_max = scoring_data.get('range', {}).get('max', 100000) if scoring_data.get('range') else 100000
+
+    # --- ACTIVE TEAMS ONLY -------------------------------------------------
+    # Scores belonging to inactive teams are skipped entirely so they never
+    # enter team_calculations, the normalization range, or the stats.
+    active_teams = {t.id: t for t in Team.query.filter_by(is_active=True).all()}
+    if not active_teams:
+        return [], {}
+
+    # Fetch approved scores
+    scores = Score.query.filter_by(is_approved=True).all()
+
+    # Group by team and category
+    team_scores = {}
+    for score in scores:
+        if score.team_id not in active_teams:
+            continue
+
+        if score.team_id not in team_scores:
+            team_scores[score.team_id] = {
+                'red': 0,
+                'incident-response': 0,
+                'team_obj': active_teams[score.team_id]
+            }
+
+        cat = score.category.lower()
+        if cat == 'red':
+            team_scores[score.team_id]['red'] += score.points
+        elif cat == 'incident-response':
+            team_scores[score.team_id]['incident-response'] += score.points
+
+    if not team_scores:
+        return [], {}
+
+    # Build team calculations (identical math to before — the field of
+    # teams is simply the active field now)
+    team_calculations = []
+    for team_id, data in team_scores.items():
+        if not data['team_obj']:
+            continue
+
+        # Apply weights
+        weighted_red = data['red'] * attack_weight if attack_weight != 0 else None
+        weighted_ir = data['incident-response'] * ir_weight if ir_weight != 0 else None
+
+        # Calculate raw final sum (weighted sum)
+        raw_sum_parts = []
+        if weighted_red is not None:
+            raw_sum_parts.append(weighted_red)
+        if weighted_ir is not None:
+            raw_sum_parts.append(weighted_ir)
+
+        if raw_sum_parts:
+            raw_sum = sum(raw_sum_parts)
+        else:
+            # Both weights are 0, fall back to unweighted sum
+            raw_sum = data['red'] + data['incident-response']
+
+        team_calculations.append({
+            'team_number': data['team_obj'].team_number,
+            'team_name': data['team_obj'].team_name,
+            'red_score': data['red'],
+            'ir_score': data['incident-response'],
+            'weighted_red': weighted_red,
+            'weighted_ir': weighted_ir,
+            'raw_sum': raw_sum,
+            'normalized_score': None,
+            'normalization_weight': None,
+            'final_sum': raw_sum
+        })
+
+    normalization_stats = {}
+
+    # Apply normalization if ranges are enabled and we have >1 team
+    if enable_ranges and len(team_calculations) > 1:
+        raw_sums = [t['raw_sum'] for t in team_calculations]
+        min_score = min(raw_sums)
+        max_score = max(raw_sums)
+
+        normalization_stats = {
+            'min': min_score,
+            'max': max_score,
+            'enabled': True
+        }
+
+        for team in team_calculations:
+            if max_score == min_score:
+                team['normalized_score'] = None
+                team['normalization_weight'] = None
+            else:
+                # Normalize based on the weighted raw_sum
+                norm_weight = (team['raw_sum'] - min_score) / (max_score - min_score)
+                team['normalization_weight'] = round(norm_weight, 4)
+                normalized = (norm_weight * (range_max - range_min)) + range_min
+                team['normalized_score'] = round(normalized)
+
+            if team['normalized_score'] is not None:
+                team['final_sum'] = team['normalized_score']
+
+    # Sort by Final Sum Descending
+    sorted_teams = sorted(team_calculations, key=lambda x: x['final_sum'], reverse=True)
+
+    # Calculate statistics if we have teams (active teams only)
+    if sorted_teams:
+        final_scores = [t['final_sum'] for t in sorted_teams]
+
+        high_score = max(final_scores)
+        low_score = min(final_scores)
+
+        avg_final_score = round(sum(final_scores) / len(final_scores), 2)
+
+        sorted_scores = sorted(final_scores)
+        n = len(sorted_scores)
+        if n % 2 == 0:
+            median_score = round((sorted_scores[n//2 - 1] + sorted_scores[n//2]) / 2, 2)
+        else:
+            median_score = round(sorted_scores[n//2], 2)
+
+        # Mode (most frequent value)
+        score_counts = Counter(final_scores)
+        max_count = max(score_counts.values())
+        modes = [score for score, count in score_counts.items() if count == max_count]
+
+        if max_count == 1:
+            mode_score = None
+        elif len(modes) == 1:
+            mode_score = modes[0]
+        else:
+            # Multiple modes - return the smallest one for consistency
+            mode_score = min(modes)
+
+        normalization_stats['highScore'] = high_score
+        normalization_stats['lowScore'] = low_score
+        normalization_stats['average'] = avg_final_score
+        normalization_stats['median'] = median_score
+        normalization_stats['mode'] = mode_score
+    else:
+        normalization_stats['highScore'] = 0
+        normalization_stats['lowScore'] = 0
+        normalization_stats['average'] = 0
+        normalization_stats['median'] = 0
+        normalization_stats['mode'] = None
+
+    return sorted_teams, normalization_stats
+
+
+def get_orange_scoring_config():
+    """
+    Retrieves the orange scoring configuration from Valkey.
+    Falls back to defaults if not set.
+
+    Moved from routes/orangeConfig.py so the orange calculator is fully
+    self-contained in this module.
+    """
+    try:
+        vk = get_valkey_client()
+        config_raw = vk.get("vantage:config:scoring:orange")
+
+        if config_raw:
+            return json.loads(config_raw)
+    except Exception as e:
+        current_app.logger.warning(f"Failed to read orange scoring config: {e}")
+
+    # Default Configuration
+    return {
+        'normalize_enabled': False,
+        'min_score': 0,
+        'max_score': 100,
+        'formula': 'raw_score'
+    }
+
+
+def calculate_orange_team_scores():
+    """
+    Calculates orange team scores based on the 'orange' category in the
+    Score table.
+
+    Only ACTIVE teams participate: inactive teams are excluded from the
+    per-team scores, the raw min/max used for normalization, and the
+    aggregate stats.
+
+    Logic:
+    1. Fetch approved orange scores for active teams.
+    2. Group by team_id and sum raw scores.
+    3. Determine the actual min and max raw scores across active teams.
+    4. If normalization is enabled:
+       - weight: (team_raw - min_team_raw) / (max_team_raw - min_team_raw)
+       - map to configured range: (weight * (config_max - config_min)) + config_min
+    5. If normalization is disabled, final score = raw sum.
+    """
+    config = get_orange_scoring_config()
+
+    # --- ACTIVE TEAMS ONLY -------------------------------------------------
+    active_teams = {t.id: t for t in Team.query.filter_by(is_active=True).all()}
+
+    # 1. Fetch approved orange scores
+    scores = Score.query.filter_by(category='orange', is_approved=True).all()
+
+    # 2. Group by team and sum raw scores, skipping inactive teams
+    team_totals = {}
+    for score in scores:
+        if score.team_id not in active_teams:
+            continue
+
+        if score.team_id not in team_totals:
+            team_totals[score.team_id] = {
+                'raw_sum': 0,
+                'task_count': 0,
+                'team_obj': active_teams[score.team_id]
+            }
+        team_totals[score.team_id]['raw_sum'] += score.points
+        team_totals[score.team_id]['task_count'] += 1
+
+    if not team_totals:
+        return [], {
+            'total_tasks': 0,
+            'avg_score': 0,
+            'median_score': 0,
+            'min_team_score': 0,
+            'max_team_score': 0,
+            'teams_with_scores': 0,
+            'config': config
+        }
+
+    # 3. Determine Min/Max Raw Scores across active teams
+    raw_scores_list = [data['raw_sum'] for data in team_totals.values()]
+    actual_min_raw = min(raw_scores_list)
+    actual_max_raw = max(raw_scores_list)
+
+    # 4. Calculate Final Scores
+    team_calculations = []
+
+    min_val = float(config.get('min_score', 0))
+    max_val = float(config.get('max_score', 100))
+    do_normalize = config.get('normalize_enabled', False)
+
+    range_config = max_val - min_val
+
+    for team_id, data in team_totals.items():
+        if not data['team_obj']:
+            continue
+
+        raw_score = data['raw_sum']
+        final_score = raw_score
+
+        if do_normalize:
+            # Avoid division by zero if all teams have the exact same score
+            if actual_max_raw == actual_min_raw:
+                normalized_weight = 1.0
+            else:
+                # Normalization Weight: (Raw - Min) / (Max - Min)
+                normalized_weight = (raw_score - actual_min_raw) / (actual_max_raw - actual_min_raw)
+
+            # Map weight to configured range: (weight * range) + min
+            final_score = (normalized_weight * range_config) + min_val
+
+            # Clamp just in case of floating point errors
+            final_score = max(min_val, min(max_val, final_score))
+
+        team_calculations.append({
+            'team_number': data['team_obj'].team_number,
+            'team_name': data['team_obj'].team_name,
+            'raw_sum': raw_score,
+            'task_count': data['task_count'],
+            'normalized_score': round(final_score, 2) if do_normalize else None,
+            'final_score': round(final_score, 2)
+        })
+
+    # 5. Sort by Final Score Descending
+    sorted_teams = sorted(team_calculations, key=lambda x: x['final_score'], reverse=True)
+
+    # 6. Calculate Stats (active teams only)
+    total_tasks = sum(t['task_count'] for t in team_calculations)
+    final_scores = [t['final_score'] for t in team_calculations]
+
+    if final_scores:
+        avg_final = sum(final_scores) / len(final_scores)
+        sorted_fs = sorted(final_scores)
+        n = len(sorted_fs)
+        if n % 2 == 0:
+            median_final = (sorted_fs[n//2 - 1] + sorted_fs[n//2]) / 2
+        else:
+            median_final = sorted_fs[n//2]
+    else:
+        avg_final = 0
+        median_final = 0
+
+    stats = {
+        'total_tasks': total_tasks,
+        'avg_score': round(avg_final, 2),
+        'median_score': round(median_final, 2),
+        'min_team_score': actual_min_raw,
+        'max_team_score': actual_max_raw,
+        'teams_with_scores': len(team_calculations),
+        'config': config
+    }
+
+    return sorted_teams, stats
 
 
 def _build_orange_lookup():

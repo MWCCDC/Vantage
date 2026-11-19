@@ -3,160 +3,12 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from routes.decorators import login_required, role_required
 from models import db, AuditLog, Team, OrangeTaskTemplate, OrangeTaskInstance, Score
 from models.orange_tasks import ORANGE_RATINGS
-from sqlalchemy import func, distinct
 import json
-import statistics
+from utils.valkey_client import get_valkey_client
+from utils.scoreCalculation import calculate_orange_team_scores, get_orange_scoring_config
 
 # Create the blueprint
 orange_config_bp = Blueprint('orange_config', __name__, url_prefix='/orangeConfig')
-
-
-def get_valkey_client():
-    """Get a Valkey connection from the app config"""
-    from utils.valkey_client import get_valkey_client as get_vk
-    return get_vk()
-
-
-def get_scoring_config():
-    """
-    Retrieves scoring configuration from Valkey.
-    Falls back to defaults if not set.
-    """
-    try:
-        vk = get_valkey_client()
-        config_raw = vk.get("vantage:config:scoring:orange")
-        
-        if config_raw:
-            return json.loads(config_raw)
-    except Exception as e:
-        current_app.logger.warning(f"Failed to read orange scoring config: {e}")
-    
-    # Default Configuration
-    return {
-        'normalize_enabled': False,
-        'min_score': 0,
-        'max_score': 100,       
-        'formula': 'raw_score'
-    }
-
-
-def calculate_orange_team_scores():
-    """
-    Calculates orange team scores based on the 'orange' category in the Score table.
-    
-    Logic:
-    1. Fetch all scores where category='orange' and is_approved=True.
-    2. Group by team_id and sum raw scores.
-    3. Determine the actual min and max raw scores across all teams.
-    4. If normalization is enabled:
-       - Calculate weight: (team_raw - min_team_raw) / (max_team_raw - min_team_raw)
-       - Map to configured range: (weight * (config_max - config_min)) + config_min
-    5. If normalization is disabled, final score = raw sum.
-    """
-    config = get_scoring_config()
-    
-    # 1. Fetch approved orange scores
-    scores = Score.query.filter_by(category='orange', is_approved=True).all()
-    
-    if not scores:
-        return [], {
-            'total_tasks': 0, 
-            'avg_score': 0, 
-            'median_score': 0,
-            'min_team_score': 0,
-            'max_team_score': 0,
-            'teams_with_scores': 0,
-            'config': config
-        }
-
-    # 2. Group by team and sum raw scores
-    team_totals = {}
-    for score in scores:
-        if score.team_id not in team_totals:
-            team_totals[score.team_id] = {
-                'raw_sum': 0,
-                'task_count': 0,
-                'team_obj': None
-            }
-        team_totals[score.team_id]['raw_sum'] += score.points
-        team_totals[score.team_id]['task_count'] += 1
-
-    # 3. Resolve Team Objects
-    for team_id in team_totals:
-        team_obj = Team.query.get(team_id)
-        if team_obj:
-            team_totals[team_id]['team_obj'] = team_obj
-
-    # 4. Determine Min/Max Raw Scores across all teams
-    raw_scores_list = [data['raw_sum'] for data in team_totals.values()]
-    actual_min_raw = min(raw_scores_list)
-    actual_max_raw = max(raw_scores_list)
-    
-    # 5. Calculate Final Scores
-    team_calculations = []
-    
-    min_val = float(config.get('min_score', 0))
-    max_val = float(config.get('max_score', 100))
-    do_normalize = config.get('normalize_enabled', False)
-    
-    range_config = max_val - min_val
-
-    for team_id, data in team_totals.items():
-        if not data['team_obj']:
-            continue
-            
-        raw_score = data['raw_sum']
-        final_score = raw_score
-        
-        if do_normalize:
-            # Avoid division by zero if all teams have the exact same score
-            if actual_max_raw == actual_min_raw:
-                # If everyone is equal, map to the middle of the configured range or just min?
-                # Usually, if everyone is equal, they all get the max or the average. 
-                # Let's map to the max of the range to reward completion, or min? 
-                # Standard practice: If range is 0, everyone gets the max possible normalized score.
-                normalized_weight = 1.0
-            else:
-                # Normalization Weight: (Raw - Min) / (Max - Min)
-                normalized_weight = (raw_score - actual_min_raw) / (actual_max_raw - actual_min_raw)
-            
-            # Map weight to configured range: (weight * range) + min
-            final_score = (normalized_weight * range_config) + min_val
-            
-            # Clamp just in case of floating point errors
-            final_score = max(min_val, min(max_val, final_score))
-
-        team_calculations.append({
-            'team_number': data['team_obj'].team_number,
-            'team_name': data['team_obj'].team_name,
-            'raw_sum': raw_score,
-            'task_count': data['task_count'],
-            'normalized_score': round(final_score, 2) if do_normalize else None,
-            'final_score': round(final_score, 2)
-        })
-
-    # 6. Sort by Final Score Descending
-    sorted_teams = sorted(team_calculations, key=lambda x: x['final_score'], reverse=True)
-
-    # 7. Calculate Stats
-    total_tasks = sum(t['task_count'] for t in team_calculations)
-    final_scores = [t['final_score'] for t in team_calculations]
-    
-    avg_final = statistics.mean(final_scores) if final_scores else 0
-    median_final = statistics.median(final_scores) if final_scores else 0
-
-    stats = {
-        'total_tasks': total_tasks,
-        'avg_score': round(avg_final, 2),
-        'median_score': round(median_final, 2),
-        'min_team_score': actual_min_raw,
-        'max_team_score': actual_max_raw,
-        'teams_with_scores': len(team_calculations),
-        'config': config
-    }
-
-    return sorted_teams, stats
-
 
 @orange_config_bp.route('/', methods=['GET'])
 @login_required
@@ -594,5 +446,5 @@ def scoring_import_export():
         return redirect(url_for('orange_config.orange_config'))
     
     # --- EXPORT LOGIC (GET Request) ---
-    config = get_scoring_config()
+    config = get_orange_scoring_config()
     return jsonify(config)
