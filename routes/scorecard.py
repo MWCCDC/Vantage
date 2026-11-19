@@ -8,7 +8,8 @@ import json
 import io
 import zipfile
 from utils.scoreCalculation import (
-          calculate_blue_placement, calculate_red_placement
+          calculate_blue_placement, calculate_red_placement,
+          get_ir_feedback_data
       )
 
 # PDF generation
@@ -16,7 +17,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.lib.units import inch
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
 )
@@ -529,9 +530,10 @@ def load_scorecard_data():
 
     all_teams_data, error = fetch_all_team_scores(active_team_numbers)
     red_stats = fetch_red_team_stats()
+    ir_feedback, field_avg_ir_count, ir_recovery_benchmark, ir_top_recovery_pct = get_ir_feedback_data()
 
     if error:
-        return None, None, None, red_stats, {}, {}, 0, error
+        return None, None, None, red_stats, None, 0.0, None, None, {}, {}, 0, error
 
     all_teams_data = all_teams_data or {}
 
@@ -548,10 +550,12 @@ def load_scorecard_data():
     blue_placements, num_active_teams = calculate_blue_placement()
     red_placements, _ = calculate_red_placement()
 
-    return all_teams_data, team_stats, service_benchmarks, red_stats, blue_placements, red_placements, num_active_teams, None
+    return all_teams_data, team_stats, service_benchmarks, red_stats, ir_feedback, field_avg_ir_count, ir_recovery_benchmark, ir_top_recovery_pct, blue_placements, red_placements, num_active_teams, None
 
 def build_team_pdf_from_data(team_number, all_teams_data, team_stats, red_stats,
-                             blue_placements, red_placements, num_active_teams):
+                             ir_feedback, field_avg_ir_count, ir_recovery_benchmark,
+                             ir_top_recovery_pct, blue_placements, red_placements,
+                             num_active_teams):
     """
     Build the PDF for one team from a pre-computed pipeline result.
     Returns (pdf_bytes, display_name, has_data).
@@ -561,12 +565,16 @@ def build_team_pdf_from_data(team_number, all_teams_data, team_stats, red_stats,
 
     selected_stats = (team_stats or {}).get(team_number)
     selected_red = red_stats.get(team_number)
+    selected_ir = (ir_feedback or {}).get(team_number)
+    field_avg_ir = field_avg_ir_count or 0.0
     blue_placement = (blue_placements or {}).get(team_number)
     red_placement = (red_placements or {}).get(team_number)
     display_name = all_teams_data[team_number].get('display_name', f'Team {team_number}')
 
     pdf_bytes = build_scorecard_pdf(display_name, selected_stats, selected_red,
-                                    blue_placement, red_placement, num_active_teams)
+                                    selected_ir, field_avg_ir, ir_recovery_benchmark,
+                                    ir_top_recovery_pct, blue_placement, red_placement,
+                                    num_active_teams)
     return pdf_bytes, display_name, True
 
 def sanitize_filename(display_name):
@@ -612,23 +620,39 @@ def _pct_text_color(pct):
         return COLOR_AMBER_TEXT
     return COLOR_RED
 
-def _delta_cell(delta):
-    """
-    Build a centered, colored Paragraph for a signed delta.
-
-    NOTE: Color must live in the ParagraphStyle itself — ReportLab's
-    TableStyle TEXTCOLOR command does not affect Paragraph cells.
-    Green = below average (good), red = above average (bad).
-    """
+def _delta_cell(delta, positive_is_good=False, alignment=TA_CENTER):
+    good, bad = (COLOR_GREEN, COLOR_RED) if positive_is_good else (COLOR_RED, COLOR_GREEN)
     if delta > 0:
-        color = COLOR_RED
+        color = good
     elif delta < 0:
-        color = COLOR_GREEN
+        color = bad
     else:
         color = COLOR_MUTED
     return Paragraph(_fmt_signed(delta), ParagraphStyle(
         f'delta_{color}', parent=_STYLE_VALUE,
-        alignment=TA_CENTER, textColor=color, fontName='Helvetica-Bold'))
+        alignment=alignment, textColor=color, fontName='Helvetica-Bold'))
+
+
+def _recovery_cell(recovery_percent, situation, alignment=TA_CENTER):
+    if situation == 'no_red':
+        return Paragraph("Bonus", ParagraphStyle(
+            'recovery_bonus', parent=_STYLE_VALUE,
+            alignment=alignment, textColor=COLOR_GREEN, fontName='Helvetica-Bold'))
+    if situation == 'no_data':
+        return Paragraph("—", ParagraphStyle(
+            'recovery_none', parent=_STYLE_VALUE,
+            alignment=alignment, textColor=COLOR_MUTED))
+    if situation == 'penalty':
+        # Negative IR points: the write-ups cost the team additional points.
+        text = (f"{recovery_percent:.1f}%"
+                if recovery_percent is not None else "Lost points")
+        return Paragraph(text, ParagraphStyle(
+            'recovery_penalty', parent=_STYLE_VALUE,
+            alignment=alignment, textColor=COLOR_RED, fontName='Helvetica-Bold'))
+    pct = recovery_percent if recovery_percent is not None else 0.0
+    return Paragraph(f"{pct:.1f}%", ParagraphStyle(
+        f'recovery_{pct:.0f}', parent=_STYLE_VALUE,
+        alignment=alignment, textColor=_pct_text_color(pct), fontName='Helvetica-Bold'))
 
 def _pct_cell(pct):
     """
@@ -659,9 +683,22 @@ def _uptime_cell(uptime):
         alignment=TA_CENTER, textColor=_pct_text_color(uptime), fontName='Helvetica-Bold'))
 
 def _kv_summary_table(rows):
-    """Build a 2-column 'label / value' summary table used in both sections."""
-    data = [[Paragraph(label, _STYLE_LABEL), Paragraph(value, _STYLE_VALUE)]
-            for label, value in rows]
+    """
+    Build a 2-column 'label / value' summary table used in both sections.
+
+    Values may be plain strings (wrapped in _STYLE_VALUE here) or
+    ready-made Flowables such as the Paragraphs returned by
+    _delta_cell() / _recovery_cell() — those pass through untouched.
+    """
+    data = []
+    for label, value in rows:
+        label_p = Paragraph(label, _STYLE_LABEL)
+        if isinstance(value, str):
+            value_p = Paragraph(value, _STYLE_VALUE)
+        else:
+            value_p = value  # already a Flowable (cell helper output)
+        data.append([label_p, value_p])
+
     t = Table(data, colWidths=[2.1 * inch, 4.5 * inch])
     t.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
@@ -697,7 +734,9 @@ _init_styles()
 
 
 def build_scorecard_pdf(display_name, selected_stats, selected_red,
-                        blue_placement, red_placement, num_active_teams):
+                        selected_ir, field_avg_ir, ir_recovery_benchmark,
+                        ir_top_recovery_pct, blue_placement, red_placement,
+                        num_active_teams):
     """
     Assemble the team feedback PDF. Returns PDF bytes.
 
@@ -858,6 +897,96 @@ def build_scorecard_pdf(display_name, selected_stats, selected_red,
             "attack type across all active teams (negative is better). A zero with a "
             "negative value means that attack succeeded against other teams but never this one.",
             _STYLE_NOTE))
+    
+    # ---------- Incident Response: Summary ----------
+    story.append(Paragraph("Incident Response", _STYLE_HEADING))
+
+    ir_rows = []
+    if selected_ir:
+        ir_delta = selected_ir['ir_count'] - field_avg_ir
+
+        ir_rows.append(("IR Submissions", str(selected_ir['ir_count'])))
+        ir_rows.append(("IRs vs Average", _delta_cell(ir_delta, positive_is_good=True,
+                                                      alignment=TA_LEFT)))
+        # Recovery vs field: team's own % plus a signed delta against the
+        # field benchmark (median of defined recovery rates). The benchmark
+        # VALUE itself is never shown — only the delta, so teams see their
+        # positioning without the underlying field statistic.
+        def _field_delta_frag(delta, label):
+            """Signed delta fragment colored by sign: '(-8.2 % pts vs all teams)'."""
+            sign = '+' if delta > 0 else ''
+            color = ('#28a745' if delta > 0
+                     else '#dc3545' if delta < 0
+                     else '#6c757d')
+            return (f"<font size='8' color='{color}'>"
+                    f"({sign}{delta:.1f} % pts {label})</font>")
+
+        team_pct = (0.0 if selected_ir['recovery_situation'] == 'no_ir'
+                    else selected_ir['recovery_percent'])
+
+        if (ir_recovery_benchmark is not None and team_pct is not None
+                and ir_top_recovery_pct is not None):
+            recovery_delta = team_pct - ir_recovery_benchmark
+            top_delta = team_pct - ir_top_recovery_pct
+
+            if team_pct >= 90:
+                pct_color = '#28a745'
+            elif team_pct >= 70:
+                pct_color = '#b8860b'
+            else:
+                pct_color = '#dc3545'
+
+            ir_rows.append(("Points Regained", Paragraph(
+                f"<font color='{pct_color}'>{team_pct:.1f}%</font>"
+                f" {_field_delta_frag(recovery_delta, 'vs all teams')}"
+                f" {_field_delta_frag(top_delta, 'vs top')}",
+                ParagraphStyle('recovery_vs_field', parent=_STYLE_VALUE,
+                               alignment=TA_LEFT, fontName='Helvetica-Bold'))))
+        else:
+            ir_rows.append(("Points Regained", _recovery_cell(
+                selected_ir['recovery_percent'],
+                selected_ir['recovery_situation'],
+                alignment=TA_LEFT)))
+    else:
+        ir_rows.append(("IR Submissions", "No incident response data available."))
+
+    story.append(_kv_summary_table(ir_rows))
+
+    story.append(Paragraph(
+        "'IRs vs Average' compares the team's count of incident "
+        "response submissions to the average across all active teams "
+        "(above average is favorable). 'Points Regained' is the share of "
+        "red-team points recovered through incident response, computed "
+        "from raw scores; a 'Bonus' marker means the team earned IR "
+        "points while conceding none. Incident feedback is provided by "
+        "the red team where available.",
+        _STYLE_NOTE))
+
+    # ---------- Incident Response: Per-Incident Feedback ----------
+    # Each approved IR entry with the red team's feedback (from the score
+    # description). No "refID" wording is shown to teams.
+    if selected_ir and selected_ir.get('ir_entries'):
+        story.append(Spacer(1, 6))
+        story.append(HRFlowable(width="100%", thickness=0.75,
+                                color=COLOR_BAR_BG, spaceAfter=8))
+
+        fb_rows = []
+        for entry in selected_ir['ir_entries']:
+            identifier = entry.get('identifier') or ''
+            feedback = entry.get('feedback')
+            points = entry.get('points', 0)
+
+            if identifier is not None and points < 0:
+                label = f'{identifier} (<font color="#dc3545"><b>- pts</b></font>)'
+            else:
+                label = identifier if identifier else "-"
+
+            
+            value = feedback if feedback else "Feedback not found"
+
+            fb_rows.append((label, value))
+
+        story.append(_kv_summary_table(fb_rows))
 
     doc.build(story)
     pdf_bytes = buf.getvalue()
@@ -875,7 +1004,7 @@ def build_scorecard_pdf(display_name, selected_stats, selected_red,
 def scorecard_dashboard():
     """Admin scorecard dashboard with team selection, service and red team feedback."""
 
-    all_teams_data, team_stats, service_benchmarks, red_stats, blue_placements, red_placements, num_active_teams, error = load_scorecard_data()
+    all_teams_data, team_stats, service_benchmarks, red_stats, ir_feedback, field_avg_ir_count, ir_recovery_benchmark, ir_top_recovery_pct, blue_placements, red_placements, num_active_teams, error = load_scorecard_data()
 
     # Recipient addresses per team (from team metadata), for the email modal
     team_emails = {}
@@ -892,6 +1021,9 @@ def scorecard_dashboard():
                                team_stats=None,
                                selected_stats=None,
                                selected_red=None,
+                               selected_ir=None,
+                               ir_recovery_benchmark=None,
+                               ir_top_recovery_pct=None,
                                service_benchmarks=None,
                                blue_placements={},
                                red_placements={},
@@ -907,12 +1039,15 @@ def scorecard_dashboard():
     selected_team = None
     selected_stats = None
     selected_red = None
+    selected_ir = None
 
     if selected_team_id is not None and team_stats and selected_team_id in team_stats:
         selected_team = all_teams_data[selected_team_id]
         selected_stats = team_stats[selected_team_id]
         # Red stats are keyed by team NUMBER (== Quotient team ID)
         selected_red = red_stats.get(selected_team_id)
+        # IR feedback keyed by team number, same as red stats
+        selected_ir = (ir_feedback or {}).get(selected_team_id)
 
     return render_template('scorecard.html',
                            is_admin_page=True,
@@ -923,6 +1058,10 @@ def scorecard_dashboard():
                            team_stats=team_stats,
                            selected_stats=selected_stats,
                            selected_red=selected_red,
+                           selected_ir=selected_ir,
+                           ir_recovery_benchmark=ir_recovery_benchmark,
+                           field_avg_ir_count=field_avg_ir_count,
+                           ir_top_recovery_pct=ir_top_recovery_pct,
                            service_benchmarks=service_benchmarks,
                            blue_placements=blue_placements,
                            red_placements=red_placements,
@@ -939,7 +1078,7 @@ def export_scorecard_pdf():
         flash('No team selected for PDF export.', 'error')
         return redirect(url_for('scorecard.scorecard_dashboard'))
 
-    all_teams_data, team_stats, _, red_stats, blue_placements, red_placements, num_active_teams, error = load_scorecard_data()
+    all_teams_data, team_stats, service_benchmarks, red_stats, ir_feedback, field_avg_ir_count, ir_recovery_benchmark, ir_top_recovery_pct, blue_placements, red_placements, num_active_teams, error = load_scorecard_data()
 
     if error or not all_teams_data or team_id not in all_teams_data:
         flash(error or f'No Quotient data available for team {team_id}.', 'error')
@@ -948,7 +1087,9 @@ def export_scorecard_pdf():
     try:
         pdf_bytes, display_name, _ = build_team_pdf_from_data(
             team_id, all_teams_data, team_stats, red_stats,
-            blue_placements, red_placements, num_active_teams)
+            ir_feedback, field_avg_ir_count, ir_recovery_benchmark,
+            ir_top_recovery_pct, blue_placements, red_placements,
+            num_active_teams)
     except Exception as e:
         current_app.logger.error(f"Feedback PDF generation failed for team {team_id}: {str(e)}")
         flash(f'Failed to generate PDF: {str(e)}', 'error')
@@ -978,7 +1119,7 @@ def export_all_scorecards_zip():
     additional materials). Inactive teams and Quotient test teams are
     excluded — the ZIP contains only teams active in Vantage.
     """
-    all_teams_data, team_stats, _, red_stats, blue_placements, red_placements, num_active_teams, error = load_scorecard_data()
+    all_teams_data, team_stats, service_benchmarks, red_stats, ir_feedback, field_avg_ir_count, ir_recovery_benchmark, ir_top_recovery_pct, blue_placements, red_placements, num_active_teams, error = load_scorecard_data()
 
     if error:
         flash(f'Cannot generate PDFs: {error}', 'error')
@@ -1002,7 +1143,9 @@ def export_all_scorecards_zip():
                 try:
                     pdf_bytes, display_name, has_data = build_team_pdf_from_data(
                         team_number, all_teams_data, team_stats, red_stats,
-                        blue_placements, red_placements, num_active_teams)
+                        ir_feedback, field_avg_ir_count, ir_recovery_benchmark,
+                        ir_top_recovery_pct, blue_placements, red_placements,
+                        num_active_teams)
                 except Exception as e:
                     current_app.logger.error(
                         f'ZIP export: PDF generation failed for team {team_number}: {str(e)}')
@@ -1064,7 +1207,7 @@ def email_selected_team(team_number):
         flash('A subject is required.', 'error')
         return redirect(url_for('scorecard.scorecard_dashboard', team_id=team_number))
 
-    all_teams_data, team_stats, _, red_stats, blue_placements, red_placements, num_active_teams, error = load_scorecard_data()
+    all_teams_data, team_stats, service_benchmarks, red_stats, ir_feedback, field_avg_ir_count, ir_recovery_benchmark, ir_top_recovery_pct, blue_placements, red_placements, num_active_teams, error = load_scorecard_data()
 
     if error:
         flash(f'Cannot generate PDF: {error}', 'error')
@@ -1073,7 +1216,9 @@ def email_selected_team(team_number):
     try:
         pdf_bytes, display_name, has_data = build_team_pdf_from_data(
             team_number, all_teams_data, team_stats, red_stats,
-            blue_placements, red_placements, num_active_teams)
+            ir_feedback, field_avg_ir_count, ir_recovery_benchmark,
+            ir_top_recovery_pct, blue_placements, red_placements,
+            num_active_teams)
         if not has_data:
             flash(f'Team {team_number} has no Quotient data to send.', 'error')
             return redirect(url_for('scorecard.scorecard_dashboard', team_id=team_number))
@@ -1114,7 +1259,7 @@ def email_all_teams():
         flash('A subject is required.', 'error')
         return redirect(url_for('scorecard.scorecard_dashboard'))
 
-    all_teams_data, team_stats, _, red_stats, blue_placements, red_placements, num_active_teams, error = load_scorecard_data()
+    all_teams_data, team_stats, service_benchmarks, red_stats, ir_feedback, field_avg_ir_count, ir_recovery_benchmark, ir_top_recovery_pct, blue_placements, red_placements, num_active_teams, error = load_scorecard_data()
 
     if error:
         flash(f'Cannot generate PDFs: {error}', 'error')
@@ -1137,7 +1282,9 @@ def email_all_teams():
         try:
             pdf_bytes, display_name, has_data = build_team_pdf_from_data(
                 team_obj.team_number, all_teams_data, team_stats, red_stats,
-                blue_placements, red_placements, num_active_teams)
+                ir_feedback, field_avg_ir_count, ir_recovery_benchmark,
+                ir_top_recovery_pct, blue_placements, red_placements,
+                num_active_teams)
             if not has_data:
                 skipped_no_data += 1
                 continue

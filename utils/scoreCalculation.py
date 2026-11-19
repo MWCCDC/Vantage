@@ -108,6 +108,7 @@ def get_ir_recovery_percent(team_id):
                        that was blocked; reward this, do not show a %
           - 'no_ir':   points conceded but nothing recovered
           - 'no_data': no red or IR activity at all
+          - 'penalty': team lost additional points on their IR writeup
     """
     totals = get_raw_red_ir_totals(team_id)
     red = totals['red']
@@ -118,11 +119,120 @@ def get_ir_recovery_percent(team_id):
     if ir > 0 and red >= 0:
         # Edge case: nothing conceded, but the team earned IR points anyway
         return None, 'no_red'
+    if ir < 0 and red < 0:
+        # Team LOST additional points on their IR write-ups. Signed percent
+        # expresses the loss magnitude relative to points conceded (e.g.
+        # -25.0 means the IR penalties deepened their hole by 25% of what
+        # red took). Negative signals "worse than doing nothing".
+        return (ir / abs(red)) * 100, 'penalty'
+    if ir < 0:
+        # Negative IR with nothing conceded — no denominator; still a loss.
+        return None, 'penalty'
     if ir <= 0 and red < 0:
         return None, 'no_ir'
 
     # Normal case: points conceded (negative red) and points recovered (positive IR)
     return (abs(ir) / abs(red)) * 100, 'normal'
+
+def get_ir_feedback_data():
+    """
+    Per-team incident-response feedback data for the scorecard PDFs.
+
+    Field statistics (average IR count) use ONLY active teams, consistent
+    with the module-wide convention.
+
+    Returns:
+        (per_team, field_avg_ir_count)
+        per_team: {team_number: {
+            'ir_count': int,      # approved IR scores for the team
+            'ir_entries': [       # ordered by submission time
+                {'identifier': str or '',     # Score.reference_id
+                 'feedback': str or None},    # Score.description
+                ...
+            ],
+            'recovery_percent': float or None,
+            'recovery_situation': 'normal'|'no_red'|'no_ir'|'no_data'
+        }}
+        field_avg_ir_count: float (mean approved IR count across active teams)
+
+    Each approved IR score becomes one entry — duplicates included, since
+    red may submit multiple feedback rounds against the same identifier.
+    Active teams with zero IR activity still get an entry (empty list), so
+    the field average reflects the whole active field.
+    """
+    active_teams = Team.query.filter_by(is_active=True).order_by(Team.team_number).all()
+    if not active_teams:
+        return {}, 0.0
+
+    team_id_to_number = {t.id: t.team_number for t in active_teams}
+
+    # Approved IR scores for active teams, oldest first so the feedback
+    # list reads chronologically.
+    ir_scores = Score.query.filter(
+        Score.category == 'incident-response',
+        Score.is_approved == True,
+        Score.team_id.in_(team_id_to_number.keys())
+    ).order_by(Score.timestamp.asc()).all()
+
+    counts_by_team_id = {t.id: 0 for t in active_teams}
+    entries_by_team_id = {t.id: [] for t in active_teams}
+    for score in ir_scores:
+        counts_by_team_id[score.team_id] = counts_by_team_id.get(score.team_id, 0) + 1
+        # description holds the red team's feedback when they provide it
+        feedback = (score.description or '').strip() or None
+        entries_by_team_id[score.team_id].append({
+            'identifier': score.reference_id or '',
+            'feedback': feedback,
+            'points': score.points,
+        })
+
+    field_avg = sum(counts_by_team_id.values()) / len(active_teams)
+
+    per_team = {}
+    for team in active_teams:
+        recovery_percent, situation = get_ir_recovery_percent(team.id)
+        per_team[team.team_number] = {
+            'ir_count': counts_by_team_id[team.id],
+            'ir_entries': entries_by_team_id[team.id],
+            'recovery_percent': recovery_percent,
+            'recovery_situation': situation,
+        }
+
+    # Field recovery-rate benchmark: MEDIAN of each team's % points regained.
+    # Inclusion rules:
+    #   - 'normal':  team's percent counts as-is
+    #   - 'penalty': negative percent counts (bad write-ups drag it down)
+    #   - 'no_ir':   counts as 0.0 — nothing recovered IS a recovery rate of zero
+    #   - 'no_red' / 'no_data': EXCLUDED — no denominator, rate is undefined
+    defined_pcts = []
+    for data in per_team.values():
+        situation = data['recovery_situation']
+        if situation in ('no_red', 'no_data'):
+            continue
+        if situation == 'no_ir':
+            defined_pcts.append(0.0)
+        elif data['recovery_percent'] is not None:
+            defined_pcts.append(data['recovery_percent'])
+        # ('penalty' with red==0 yields percent=None — undefined, excluded)
+
+    field_recovery_benchmark = None
+    if defined_pcts:
+        defined_pcts.sort()
+        n = len(defined_pcts)
+        mid = n // 2
+        if n % 2 == 0:
+            field_recovery_benchmark = round((defined_pcts[mid - 1] + defined_pcts[mid]) / 2, 1)
+        else:
+            field_recovery_benchmark = round(defined_pcts[mid], 1)
+        # To switch to MEAN instead: field_recovery_benchmark = round(sum(defined_pcts) / len(defined_pcts), 1)
+
+    # Ceiling benchmark: highest DEFINED recovery rate in the active field.
+    # Teams with undefined rates ('no_red'/'no_data') are excluded, same
+    # inclusion rules as the median — a 'no_red' team legitimately has no
+    # recovery rate and should never crown the leaderboard.
+    field_top_recovery = round(max(defined_pcts), 1) if defined_pcts else None
+
+    return per_team, field_avg, field_recovery_benchmark, field_top_recovery
 
 def calculate_red_team_scores(scoring_data):
     """

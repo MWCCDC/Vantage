@@ -343,6 +343,160 @@
     {% endif %}
 
     {% endif %}
+
+        <!-- ===== INCIDENT RESPONSE SECTION ===== -->
+        <div class="ranking-section" style="margin-top: 30px;">
+            <div class="section-header">
+                <h2>Incident Response — {{ selected_stats.display_name }}</h2>
+            </div>
+    
+            {% if selected_ir %}
+            <!-- IR Stat Cards -->
+            <div class="stats-grid" style="margin-top: 15px;">
+                <div class="stat-card">
+                    <div class="stat-icon">📝</div>
+                    <div class="stat-content">
+                        <h3>IR Submissions</h3>
+                        <p class="stat-value">{{ selected_ir.ir_count }}</p>
+                        <p class="stat-subtitle">Approved incident responses</p>
+                    </div>
+                </div>
+    
+                <div class="stat-card">
+                    <div class="stat-icon">⚖️</div>
+                    <div class="stat-content">
+                        <h3>IRs vs Average</h3>
+                        {% set ir_delta = selected_ir.ir_count - field_avg_ir_count %}
+                        <p class="stat-value" style="color: {% if ir_delta > 0 %}var(--primary-green){% elif ir_delta < 0 %}var(--danger-color){% else %}var(--text-secondary){% endif %};">
+                            {% if ir_delta > 0 %}+{% endif %}{{ ir_delta|round(1) }}
+                        </p>
+                        <p class="stat-subtitle">Field average: {{ field_avg_ir_count|round(1) }} (above is favorable)</p>
+                    </div>
+                </div>
+    
+                <div class="stat-card">
+                    <div class="stat-icon">🔁</div>
+                    <div class="stat-content">
+                        <h3>IR Points</h3>
+                        {% set ir_total_pts = selected_ir.ir_entries|sum(attribute='points') %}
+                        <p class="stat-value" style="color: {% if ir_total_pts > 0 %}var(--primary-green){% elif ir_total_pts < 0 %}var(--danger-color){% else %}var(--text-secondary){% endif %};">
+                            {% if ir_total_pts > 0 %}+{% endif %}{{ ir_total_pts }}
+                        </p>
+                        <p class="stat-subtitle">Net points returned (green) or lost (red) via IRs</p>
+                    </div>
+                </div>
+    
+                <div class="stat-card">
+                    <div class="stat-icon">♻️</div>
+                    <div class="stat-content">
+                        <h3>Points Regained</h3>
+                        {% if selected_ir.recovery_situation == 'no_red' %}
+                        <p class="stat-value" style="color: var(--primary-green);">Bonus</p>
+                        <p class="stat-subtitle">Earned IR points while conceding none</p>
+                        {% elif selected_ir.recovery_situation == 'no_data' %}
+                        <p class="stat-value">—</p>
+                        <p class="stat-subtitle">No red or IR activity</p>
+                        {% elif selected_ir.recovery_situation == 'penalty' %}
+                        <p class="stat-value" style="color: var(--danger-color);">
+                            {% if selected_ir.recovery_percent is not none %}{{ "%.1f"|format(selected_ir.recovery_percent) }}%{% else %}Lost points{% endif %}
+                        </p>
+                        <p class="stat-subtitle">IR write-ups cost additional points</p>
+                        {% elif selected_ir.recovery_situation == 'no_ir' %}
+                        <p class="stat-value" style="color: var(--danger-color);">0.0%</p>
+                        <p class="stat-subtitle">Nothing recovered from points conceded</p>
+                        {% else %}
+                        <p class="stat-value" style="color: {% if selected_ir.recovery_percent >= 90 %}var(--primary-green){% elif selected_ir.recovery_percent >= 70 %}#ffc107{% else %}var(--danger-color){% endif %};">
+                            {{ "%.1f"|format(selected_ir.recovery_percent) }}%
+                        </p>
+                        <p class="stat-subtitle">Share of red-team points recovered through IRs</p>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Recovery vs Field Benchmark -->
+                {% set team_recovery_pct = 0 if selected_ir.recovery_situation == 'no_ir' else selected_ir.recovery_percent %}
+                {% if ir_recovery_benchmark is not none and team_recovery_pct is not none %}
+                {% set recovery_delta = team_recovery_pct - ir_recovery_benchmark %}
+                <div class="stat-card">
+                    <div class="stat-icon">📈</div>
+                    <div class="stat-content">
+                        <h3>Recovery vs Field</h3>
+                        <p class="stat-value" style="color: {% if recovery_delta > 0 %}var(--primary-green){% elif recovery_delta < 0 %}var(--danger-color){% else %}var(--text-secondary){% endif %};">
+                            {% if recovery_delta > 0 %}+{% endif %}{{ recovery_delta|round(1) }} % pts
+                        </p>
+                        <p class="stat-subtitle">
+                            Field median: {{ ir_recovery_benchmark }}% regained —
+                            you're {{ 'above' if recovery_delta > 0 else ('below' if recovery_delta < 0 else 'at') }} the midpoint
+                        </p>
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Recovery vs Top Team -->
+                {% if ir_top_recovery_pct is not none and team_recovery_pct is not none %}
+                {% set top_delta = team_recovery_pct - ir_top_recovery_pct %}
+                <div class="stat-card">
+                    <div class="stat-icon">🏆</div>
+                    <div class="stat-content">
+                        <h3>Recovery vs Top</h3>
+                        <p class="stat-value" style="color: {% if top_delta > 0 %}var(--primary-green){% elif top_delta < 0 %}var(--danger-color){% else %}var(--text-secondary){% endif %};">
+                            {% if top_delta > 0 %}+{% endif %}{{ top_delta|round(1) }} % pts
+                        </p>
+                        <p class="stat-subtitle">
+                            {% if top_delta == 0 %}
+                            You're tied with the best recovery rate in the field
+                            {% elif top_delta < 0 %}
+                            You could regain {{ top_delta|abs|round(1) }} % pts more per red point — matching the top team
+                            {% else %}
+                            Best recovery rate in the field
+                            {% endif %}
+                        </p>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+    
+            <p style="color: var(--text-secondary); margin: 15px 0; font-size: 0.9rem;">
+                Each row below is one approved incident response, with the red team's feedback
+                where provided. <strong>Points</strong> shows points returned (green, +) or
+                lost (red, −) for that submission — negative points indicate the write-up
+                itself was penalized.
+            </p>
+    
+            <div class="table-container">
+                <table class="ranking-table">
+                    <thead>
+                        <tr>
+                            <th>Submission</th>
+                            <th>Points</th>
+                            <th>Feedback</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for entry in selected_ir.ir_entries %}
+                        <tr>
+                            <td><code>{{ entry.identifier or '—' }}</code></td>
+                            <td style="font-weight: 600; color: {% if entry.points > 0 %}var(--primary-green){% elif entry.points < 0 %}var(--danger-color){% else %}var(--text-secondary){% endif %};">
+                                {% if entry.points > 0 %}+{% endif %}{{ entry.points }}
+                            </td>
+                            <td>{{ entry.feedback or 'No feedback provided.' }}</td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="3" style="text-align: center; padding: 20px; color: var(--text-secondary);">
+                                This team has no approved incident response submissions yet.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="empty-state" style="padding: 40px; text-align: center;">
+                <p style="color: var(--text-secondary);">No incident response data available for this team.</p>
+            </div>
+            {% endif %}
+        </div>
 </div>
 
 <!-- ===== Email Modal: Selected Team ===== -->
