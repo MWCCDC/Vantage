@@ -461,6 +461,21 @@ def _build_orange_lookup():
         lookup = {}
     return lookup, orange_stats
 
+def _resolved_red_total(red_calc, raw_red_sum):
+    """
+    The canonical red value for standings-style views: the red calculator's
+    final_sum (weighted, then normalized when ranges are enabled), falling
+    back to the calculator's raw red_score, and to the raw approved red sum
+    when the team has no calculation (config missing, or team has no
+    red/IR scores).
+    """
+    if red_calc is not None:
+        return (
+            red_calc['final_sum'] if red_calc['final_sum'] is not None
+            else red_calc['red_score']
+        )
+    return raw_red_sum
+
 
 def calculate_team_standings():
     """
@@ -499,17 +514,13 @@ def calculate_team_standings():
             if cat in score_map and cat not in ('red', 'orange'):
                 score_map[cat] += score.points
 
-        # Red override (fall back to raw sum if team absent from calculation)
-        if team.team_number in red_lookup:
-            red_calc = red_lookup[team.team_number]
-            score_map['red'] = (
-                red_calc['final_sum'] if red_calc['final_sum'] is not None
-                else red_calc['red_score']
-            )
-        else:
-            score_map['red'] = sum(
-                s.points for s in approved_scores if s.category.lower() == 'red'
-            )
+        # Red override (canonical resolution shared with red placement)
+        raw_red_sum = sum(
+            s.points for s in approved_scores if s.category.lower() == 'red'
+        )
+        score_map['red'] = _resolved_red_total(
+            red_lookup.get(team.team_number), raw_red_sum
+        )
 
         # Orange override (fall back to raw sum if team absent from calculation)
         if team.team_number in orange_lookup:
@@ -572,3 +583,94 @@ def calculate_overall_stats(teams_data):
         overall_stats['median'] = sorted_scores[mid]
 
     return overall_stats
+
+def _rank_team_totals(totals_by_team_number):
+    """
+    Competition ranking over {team_number: total}: higher total = better
+    rank, ties share a rank, next distinct total takes the next position.
+
+    Handles negative totals correctly (a less-negative red total outranks a
+    more-negative one) and float totals (normalized red scores).
+    """
+    team_list = sorted(totals_by_team_number.items(), key=lambda kv: (-kv[1], kv[0]))
+
+    placements = {}
+    current_rank = 1
+    prev_total = None
+
+    for i, (team_number, total) in enumerate(team_list):
+        if prev_total is not None and total < prev_total:
+            current_rank = i + 1
+
+        placements[team_number] = {'rank': current_rank, 'total': total}
+        prev_total = total
+
+    return placements
+
+
+def calculate_blue_placement():
+    """
+    Blue (services) placement for all ACTIVE teams, ranked by the sum of
+    approved 'blue' category scores (higher is better).
+
+    Returns ({team_number: {'rank': int, 'total': int}}, num_active_teams)
+    """
+    active_teams = Team.query.filter_by(is_active=True).all()
+    if not active_teams:
+        return {}, 0
+
+    totals_rows = db.session.query(
+        Score.team_id,
+        func.sum(Score.points).label('total_points')
+    ).filter(
+        Score.category == 'blue',
+        Score.is_approved == True
+    ).group_by(Score.team_id).all()
+
+    total_by_team_id = {row[0]: (row[1] or 0) for row in totals_rows}
+
+    totals = {
+        team.team_number: total_by_team_id.get(team.id, 0)
+        for team in active_teams
+    }
+
+    return _rank_team_totals(totals), len(active_teams)
+
+
+def calculate_red_placement():
+    """
+    Red placement for all ACTIVE teams, ranked by the SAME red values the
+    dashboard standings show: the red calculator's weighted/normalized
+    final_sum (raw-sum fallback when a team has no calculation). This keeps
+    the scorecard feedback PDFs and the dashboard permanently in agreement
+    about red ordering, even when attack/IR weights or normalization
+    ranges are configured.
+
+    Returns ({team_number: {'rank': int, 'total': int}}, num_active_teams)
+    """
+    active_teams = Team.query.filter_by(is_active=True).order_by(Team.team_number).all()
+    if not active_teams:
+        return {}, 0
+
+    # Raw approved red sums, in one grouped query (fallback + no-calc teams)
+    totals_rows = db.session.query(
+        Score.team_id,
+        func.sum(Score.points).label('total_points')
+    ).filter(
+        Score.category == 'red',
+        Score.is_approved == True
+    ).group_by(Score.team_id).all()
+    raw_red_by_team_id = {row[0]: (row[1] or 0) for row in totals_rows}
+
+    # Red calculator results (dict: team_number -> calc), same source as
+    # the dashboard standings use.
+    red_lookup, _ = get_red_calculation_lookup()
+
+    totals = {}
+    for team in active_teams:
+        raw_red_sum = raw_red_by_team_id.get(team.id, 0)
+        totals[team.team_number] = _resolved_red_total(
+            red_lookup.get(team.team_number), raw_red_sum
+        )
+
+    return _rank_team_totals(totals), len(active_teams)

@@ -7,6 +7,9 @@ from models import db, Team, Score
 import json
 import io
 import zipfile
+from utils.scoreCalculation import (
+          calculate_blue_placement, calculate_red_placement
+      )
 
 # PDF generation
 from reportlab.lib.pagesizes import letter
@@ -283,79 +286,6 @@ def fetch_service_uptime(active_team_numbers):
             current_app.logger.error(f"Failed to process uptime for Engine {engine_id}: {str(e)}")
 
     return all_uptime_data
-
-def calculate_blue_placement():
-    """
-    Calculate blue (services) placement for all active teams based on total points.
-
-    Returns ({team_number: {'rank': int, 'total': int}}, num_active_teams)
-    Teams are ranked by sum of approved 'blue' category scores; higher is better.
-    Ties share a rank.
-    """
-    return _calculate_category_placement('blue')
-
-def calculate_red_placement():
-    """
-    Calculate red placement for all active teams based on total red points.
-
-    Returns ({team_number: {'rank': int, 'total': int}}, num_active_teams)
-
-    Red scores can be positive or negative:
-    - Positive sums are usually awarded TO the blue team (e.g., bonuses).
-    - Negative sums mean points conceded to the red team — a larger negative
-      is worse.
-    Sorting by total descending handles both: higher total (positive or
-    less-negative) = better rank.
-    """
-    return _calculate_category_placement('red')
-
-def _calculate_category_placement(category):
-    """
-    Shared placement calculation for a score category.
-
-    Ranks all ACTIVE teams by the sum of their approved scores in the given
-    category, highest total first. Ties receive the same rank.
-    Returns ({team_number: {'rank', 'total'}}, num_active_teams).
-    """
-    active_teams = Team.query.filter_by(is_active=True).all()
-    if not active_teams:
-        return {}, 0
-
-    num_teams = len(active_teams)
-
-    totals = db.session.query(
-        Score.team_id,
-        db.func.sum(Score.points).label('total_points')
-    ).filter(
-        Score.category == category,
-        Score.is_approved == True
-    ).group_by(Score.team_id).all()
-
-    total_by_team_id = {row.team_id: (row.total_points or 0) for row in totals}
-
-    team_list = [
-        {'team_number': team.team_number, 'total': total_by_team_id.get(team.id, 0)}
-        for team in active_teams
-    ]
-
-    # Sort by total descending (higher is better whether positive or negative)
-    team_list.sort(key=lambda x: (-x['total'], x['team_number']))
-
-    placements = {}
-    current_rank = 1
-    prev_total = None
-
-    for i, team in enumerate(team_list):
-        if prev_total is not None and team['total'] < prev_total:
-            current_rank = i + 1
-
-        placements[team['team_number']] = {
-            'rank': current_rank,
-            'total': team['total']
-        }
-        prev_total = team['total']
-
-    return placements, num_teams
 
 def calculate_service_statistics(all_teams_data):
     """
