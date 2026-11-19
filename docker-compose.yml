@@ -1,0 +1,146 @@
+version: '3.8'
+
+services:
+  vantage:
+    build: .
+    container_name: vantage-app
+    env_file:
+      - .env
+    environment:
+      # App Secrets
+      - SECRET_KEY=${SECRET_KEY:-change-this-in-production}
+      
+      # OIDC Settings
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
+      - OIDC_DISCOVERY_URL=${OIDC_DISCOVERY_URL:-https://accounts.example.com/.well-known/openid-configuration}
+      - OIDC_REDIRECT_URI=${OIDC_REDIRECT_URI:-http://localhost:8000/callback}
+      
+      # Database Settings
+      - SQLALCHEMY_DATABASE_URI=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-vantage}?connect_timeout=10
+      
+      # Gunicorn Tuning
+      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-2}
+      - GUNICORN_THREADS=${GUNICORN_THREADS:-4}
+
+      # Valkey settings
+      - VALKEY_HOST=${VALKEY_HOST:-valkey}
+      - VALKEY_PORT=${VALKEY_PORT:-6379}
+      - VALKEY_PASSWORD=${VALKEY_PASSWORD}
+      
+    depends_on:
+      db:
+        condition: service_healthy
+      valkey:
+        condition: service_started
+          
+    restart: unless-stopped
+    networks:
+      - vantage-net
+    
+  # Celery Beat Scheduler (RedBeat)
+  vantage-beat:
+    build: .
+    command: celery -A celery_app.celery beat --scheduler redbeat.RedBeatScheduler --loglevel=info
+    environment:
+      - VALKEY_HOST=${VALKEY_HOST:-valkey}
+      - VALKEY_PORT=${VALKEY_PORT:-6379}
+      - VALKEY_PASSWORD=${VALKEY_PASSWORD}
+      # App Secrets
+      - SECRET_KEY=${SECRET_KEY:-change-this-in-production}
+      
+      # OIDC Settings
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
+      - OIDC_DISCOVERY_URL=${OIDC_DISCOVERY_URL:-https://accounts.example.com/.well-known/openid-configuration}
+      - OIDC_REDIRECT_URI=${OIDC_REDIRECT_URI:-http://localhost:8000/callback}
+      
+      # Database Settings
+      - SQLALCHEMY_DATABASE_URI=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-vantage}?connect_timeout=10
+    depends_on:
+      vantage:
+        condition: service_healthy
+      valkey:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - vantage-net
+  
+  # Celery Workers (scale as needed)
+  vantage-runner:
+    build: .
+    command: celery -A celery_app.celery worker --loglevel=info --concurrency=2
+    environment:
+      # Valkey Settings
+      - VALKEY_HOST=${VALKEY_HOST:-valkey}
+      - VALKEY_PORT=${VALKEY_PORT:-6379}
+      - VALKEY_PASSWORD=${VALKEY_PASSWORD}
+
+      # App Secrets
+      - SECRET_KEY=${SECRET_KEY:-change-this-in-production}
+      
+      # OIDC Settings
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
+      - OIDC_DISCOVERY_URL=${OIDC_DISCOVERY_URL:-https://accounts.example.com/.well-known/openid-configuration}
+      - OIDC_REDIRECT_URI=${OIDC_REDIRECT_URI:-http://localhost:8000/callback}
+      
+      # Database Settings
+      - SQLALCHEMY_DATABASE_URI=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-vantage}?connect_timeout=10
+    depends_on:
+      vantage:
+        condition: service_healthy
+      valkey:
+        condition: service_started
+    deploy:
+      replicas: 2
+    restart: unless-stopped
+    networks:
+      - vantage-net
+
+  db:
+    image: postgres:15-alpine
+    container_name: vantage-db
+    environment:
+      - POSTGRES_USER=${DB_USER:-postgres}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
+      - POSTGRES_DB=${DB_NAME:-vantage}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-vantage}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - vantage-net
+
+  cloudflared:
+    depends_on:
+      vantage:
+        condition: service_healthy
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    networks:
+      - vantage-net
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARED_TOKEN}
+  
+  valkey:
+    image: valkey/valkey:latest
+    container_name: vantage-valkey
+    volumes:
+      - valkey-data:/data
+    command: valkey-server --appendonly yes --requirepass ${VALKEY_PASSWORD}
+    restart: unless-stopped
+    networks:
+      - vantage-net
+
+
+volumes:
+  pgdata:
+  valkey-data:
+
+networks:
+  vantage-net:
+    driver: bridge

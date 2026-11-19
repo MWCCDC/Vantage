@@ -1,0 +1,365 @@
+{% extends "base.html" %}
+
+{% block title %}Red Team Configuration{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <!-- Page Header -->
+    <div class="page-header">
+        <h1>Red Team Configuration</h1>
+        <p class="subtitle">Manage scoring logic and reference IDs</p>
+    </div>
+
+    <!-- Error Alerts -->
+    {% if scoring_error %}
+    <div class="ranking-section" style="border-color: var(--danger-color); background-color: rgba(220, 53, 69, 0.05);">
+        <div style="display: flex; align-items: center; gap: 15px; padding: 10px;">
+            <span style="font-size: 2rem;">⚠️</span>
+            <div>
+                <h3 style="margin: 0 0 5px 0; color: var(--danger-color);">Scoring Config Error</h3>
+                <p style="margin: 0; color: var(--text-secondary);">{{ scoring_error }}</p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+    {% if refs_error %}
+    <div class="ranking-section" style="border-color: var(--danger-color); background-color: rgba(220, 53, 69, 0.05);">
+        <div style="display: flex; align-items: center; gap: 15px; padding: 10px;">
+            <span style="font-size: 2rem;">⚠️</span>
+            <div>
+                <h3 style="margin: 0 0 5px 0; color: var(--danger-color);">Reference Config Error</h3>
+                <p style="margin: 0; color: var(--text-secondary);">{{ refs_error }}</p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- SECTION 1: Scoring Calculations -->
+    <div class="ranking-section">
+        <div class="section-header">
+            <h2>Scoring Calculations</h2>
+        </div>
+        
+        <p style="color: var(--text-secondary); margin-bottom: 20px;">
+            Define how raw scores (Attacks + Incident Response) are processed. 
+            Set a weight to <strong>0</strong> to ignore that component entirely.
+            If score ranges are enabled, the weighted sum will be normalized to the defined range.
+        </p>
+
+        <!-- Visual Form -->
+        <div style="background: var(--hover-bg); padding: 20px; border-radius: 6px; border: 1px solid var(--border-color);">
+            <form action="{{ url_for('red_config.update_red_scoring') }}" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 20px;">
+
+                    <!-- Attack Weight -->
+                    <div>
+                        <label for="attack_weight" style="font-weight: 600; display: block; margin-bottom: 5px;">
+                            Attack Weight <span style="font-weight: normal; color: var(--text-secondary); font-size: 0.85rem;">(0 to ignore)</span>
+                        </label>
+                        <input type="number" step="0.1" min="0" name="attack_weight" 
+                               value="{{ scoring_data.attack_weight if scoring_data and scoring_data.get('attack_weight') is not none else 1.0 }}" 
+                               style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                    </div>
+
+                    <!-- IR Weight -->
+                    <div>
+                        <label for="ir_weight" style="font-weight: 600; display: block; margin-bottom: 5px;">
+                            Incident Response Weight <span style="font-weight: normal; color: var(--text-secondary); font-size: 0.85rem;">(0 to ignore)</span>
+                        </label>
+                        <input type="number" step="0.1" min="0" name="ir_weight" 
+                               value="{{ scoring_data.incident_response_weight if scoring_data and scoring_data.get('incident_response_weight') is not none else 1.0 }}" 
+                               style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                    </div>
+
+                    <!-- Enable Ranges Checkbox (Now the only toggle for normalization) -->
+                    <div style="grid-column: 1 / -1;">
+                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 600;">
+                            <input type="checkbox" name="enable_ranges" {% if scoring_data and scoring_data.get('enable_ranges') %}checked{% endif %} style="transform: scale(1.3);">
+                            Enable Score Ranges (Enables Normalization)
+                        </label>
+                        <small style="color: var(--text-secondary); display: block; margin-top: 4px;">
+                            When enabled, the weighted sum of scores is normalized to fit within the Min/Max range below.
+                        </small>
+                    </div>
+
+                    <!-- Range Min/Max -->
+                    <div style="grid-column: 1 / -1;">
+                        <label style="font-weight: 600; display: block; margin-bottom: 5px;">Score Range Clamp</label>
+                        <div style="display: flex; gap: 10px;">
+                            <input type="number" name="range_min" placeholder="Min" value="{{ scoring_data.range.min if scoring_data and scoring_data.get('range') else -100000 }}" 
+                                   style="width: 50%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                            <input type="number" name="range_max" placeholder="Max" value="{{ scoring_data.range.max if scoring_data and scoring_data.get('range') else 100000 }}" 
+                                   style="width: 50%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                        </div>
+                        <small style="color: var(--text-secondary); display: block; margin-top: 4px;">
+                            Default: -100000 to 100000. Final normalized score will be clamped between these values.
+                        </small>
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 10px; align-items: center; margin-top: 10px;">
+                    <button type="submit" class="login-btn" style="font-weight: 600;">
+                        💾 Save Scoring Logic
+                    </button>
+                    <span style="color: var(--text-secondary); font-size: 0.85rem;">
+                        Updates the JSON below automatically.
+                    </span>
+                </div>
+            </form>
+        </div>
+
+        <!-- JSON Editor for Scoring (Import/Export) -->
+        <div style="margin-top: 20px;">
+            <label for="scoring_config_json" style="display: block; margin-bottom: 8px; font-weight: 600;">
+                Advanced JSON Configuration (Import/Export)
+            </label>
+            <form action="{{ url_for('red_config.update_red_scoring') }}" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <textarea 
+                    name="scoring_config_json" 
+                    id="scoring_config_json" 
+                    rows="8"
+                    style="width: 100%; padding: 15px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-content); color: var(--text-main); font-family: 'Courier New', monospace; font-size: 0.9rem; resize: vertical;"
+                >{{ scoring_json }}</textarea>
+                <div style="margin-top: 10px; display: flex; gap: 10px; align-items: center;">
+                    <button type="submit" class="refresh-btn" style="font-weight: 600;">
+                        📥 Import JSON
+                    </button>
+                    <span style="color: var(--text-secondary); font-size: 0.85rem;">
+                        Paste JSON here to override form settings.
+                    </span>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- SECTION 1.5: Score Preview Table (Leaderboard) -->
+    <div class="ranking-section" style="margin-top: 30px;">
+        <div class="section-header">
+            <h2>Score Leaderboard (Preview)</h2>
+        </div>
+
+        {% if score_preview_error %}
+        <div style="padding: 15px; background-color: rgba(220, 53, 69, 0.05); border: 1px solid var(--danger-color); border-radius: 6px; color: var(--danger-color);">
+            {{ score_preview_error }}
+        </div>
+        {% elif score_preview %}
+        <p style="color: var(--text-secondary); margin-bottom: 15px; font-size: 0.9rem;">
+            Sorted by Final Score (Descending).
+            {% if normalization_stats.enabled %}
+            <span style="display: inline-block; margin-left: 15px; padding: 4px 8px; background: var(--active-bg); border-radius: 4px; color: var(--active-text); font-weight: 600;">
+                Normalization Active: Min Raw = {{ normalization_stats.min|commaformat }}, Max Raw = {{ normalization_stats.max|commaformat }}
+            </span>
+            {% endif %}
+            <span style="display: inline-block; margin-left: 15px; padding: 4px 8px; background: #28a745; border-radius: 4px; color: white; font-weight: 600;">
+                High: {{ normalization_stats.highScore|commaformat }}
+            </span>
+            <span style="display: inline-block; margin-left: 15px; padding: 4px 8px; background: #dc3545; border-radius: 4px; color: white; font-weight: 600;">
+                Low: {{ normalization_stats.lowScore|commaformat }}
+            </span>
+            <span style="display: inline-block; margin-left: 15px; padding: 4px 8px; background: var(--primary-blue); border-radius: 4px; color: white; font-weight: 600;">
+                Avg: {{ normalization_stats.average|commaformat }}
+            </span>
+            <span style="display: inline-block; margin-left: 15px; padding: 4px 8px; background: var(--primary-orange); border-radius: 4px; color: white; font-weight: 600;">
+                Median: {{ normalization_stats.median|commaformat }}
+            </span>
+            {% if normalization_stats.mode is not none %}
+            <span style="display: inline-block; margin-left: 15px; padding: 4px 8px; background: #6f42c1; border-radius: 4px; color: white; font-weight: 600;">
+                Mode: {{ normalization_stats.mode|commaformat }}
+            </span>
+            {% else %}
+            <span style="display: inline-block; margin-left: 15px; padding: 4px 8px; background: var(--text-secondary); border-radius: 4px; color: var(--bg-content); font-weight: 600; opacity: 0.7;">
+                Mode: N/A
+            </span>
+            {% endif %}
+        </p>
+        
+        <div class="table-container">
+            <table class="ranking-table">
+                <thead>
+                    <tr>
+                        <th style="width: 50px;">Rank</th>
+                        <th>Team #</th>
+                        <th>Team Name</th>
+                        <th>Red Score</th>
+                        <th>IR Score</th>
+                        <th>Weighted Red</th>
+                        <th>Weighted IR</th>
+                        <th>Raw Sum</th>
+                        <th>Normalized Score</th>
+                        <th>Final Sum</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for team in score_preview %}
+                    <tr>
+                        <td class="rank-{{ loop.index }}" style="font-weight: 700;">{{ loop.index }}</td>
+                        <td><strong>{{ team.team_number }}</strong></td>
+                        <td>{{ team.team_name }}</td>
+                        <td>{{ team.red_score|commaformat }}</td>
+                        <td>{{ team.ir_score|commaformat }}</td>
+                        <td>
+                            {% if team.weighted_red is not none %}
+                                {{ team.weighted_red|commaformat }}
+                            {% else %}
+                                <span style="color: var(--text-secondary);">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if team.weighted_ir is not none %}
+                                {{ team.weighted_ir|commaformat }}
+                            {% else %}
+                                <span style="color: var(--text-secondary);">-</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ team.raw_sum|commaformat }}</td>
+                        <td>
+                            {% if team.normalization_weight is not none %}
+                                {{ team.normalization_weight|round(4)|string }}
+                            {% else %}
+                                <span style="color: var(--text-secondary);">-</span>
+                            {% endif %}
+                        </td>
+                        <td style="font-weight: 700; color: var(--text-primary);">
+                            {{ team.final_sum|commaformat }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        
+        <div style="margin-top: 15px; padding: 15px; background-color: var(--hover-bg); border-radius: 6px; border-left: 4px solid var(--primary-blue); font-size: 0.85rem;">
+            <strong>Calculation Notes:</strong>
+            <ul style="margin: 8px 0 0 20px; color: var(--text-secondary);">
+                <li>Weighted scores = Raw score × Weight (if weight ≠ 0)</li>
+                <li>Raw Sum = Weighted Red + Weighted IR (or just available weighted scores)</li>
+                {% if normalization_stats.enabled %}
+                <li>Normalization Weight = (raw_sum - min) / (max - min)</li>
+                <li>Normalized Score = (Weight × (range_max - range_min)) + range_min</li>
+                <li>Final Sum = Normalized Score (since ranges are enabled)</li>
+                {% else %}
+                <li>Normalization is disabled. Final Sum = Raw Sum.</li>
+                {% endif %}
+            </ul>
+        </div>
+        {% else %}
+        <div class="empty-state" style="padding: 40px;">
+            <p style="color: var(--text-secondary);">No approved scores found in the database yet.</p>
+            <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                Add scores to see how they would be calculated with the current configuration.
+            </p>
+        </div>
+        {% endif %}
+    </div>
+
+    <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 30px 0;">
+
+    <!-- SECTION 2: Scoring Reference IDs -->
+    <div class="ranking-section">
+        <div class="section-header">
+            <h2>Scoring Reference IDs</h2>
+        </div>
+
+        {% if score_refs %}
+        <p style="color: var(--text-secondary); margin-bottom: 15px; font-size: 0.9rem;">
+            Currently loaded red team scoring configurations.
+        </p>
+        
+        <div class="table-container">
+            <table class="ranking-table">
+                <thead>
+                    <tr>
+                        <th>Reference ID</th>
+                        <th>Type</th>
+                        <th>Description</th>
+                        <th>Points</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for ref in score_refs %}
+                    <tr>
+                        <td><code>{{ ref.ref_id }}</code></td>
+                        <td><span class="status-badge">{{ ref.type }}</span></td>
+                        <td>{{ ref.desc }}</td>
+                        <td style="font-weight: 600; {% if ref.points < 0 %}color: var(--danger-color);{% else %}color: var(--primary-green);{% endif %}">
+                            {{ ref.points }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state" style="padding: 40px;">
+            <p style="color: var(--text-secondary);">No scoring reference configuration loaded.</p>
+        </div>
+        {% endif %}
+
+        <!-- JSON Editor for Refs -->
+        <div style="padding: 20px; background: var(--hover-bg); border-radius: 6px; margin-top: 15px;">
+            <label for="refs_json" style="display: block; margin-bottom: 8px; font-weight: 600;">
+                Reference Configuration (JSON)
+            </label>
+            <form action="{{ url_for('red_config.update_red_refs') }}" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <textarea 
+                    name="config_json" 
+                    id="refs_json" 
+                    rows="10"
+                    style="width: 100%; padding: 15px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-content); color: var(--text-main); font-family: 'Courier New', monospace; font-size: 0.9rem; resize: vertical;"
+                >{{ refs_json }}</textarea>
+                <div style="margin-top: 10px;">
+                    <button type="submit" class="login-btn" style="font-weight: 600;">
+                        💾 Save References
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Auto-format JSON on blur for both editors
+    document.querySelectorAll('textarea[id$="_json"]').forEach(function(textarea) {
+        textarea.addEventListener('blur', function() {
+            try {
+                const parsed = JSON.parse(this.value);
+                this.value = JSON.stringify(parsed, null, 2);
+            } catch (e) {
+                // Invalid JSON, leave as-is
+            }
+        });
+    });
+</script>
+
+<style>
+    .status-badge {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        background-color: var(--hover-bg);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
+    }
+    
+    code {
+        background: var(--hover-bg);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 0.9em;
+        color: var(--primary-orange);
+    }
+    
+    textarea:focus, input:focus, select:focus {
+        outline: none;
+        border-color: var(--primary-blue);
+        box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.2);
+    }
+</style>
+{% endblock %}

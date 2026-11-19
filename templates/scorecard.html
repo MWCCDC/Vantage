@@ -1,0 +1,457 @@
+{% extends "base.html" %}
+
+{% block title %}Team Scorecard{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <!-- Page Header -->
+    <div class="page-header">
+        <h1>Team Scorecard</h1>
+        <p class="subtitle">Service performance feedback pulled from Quotient</p>
+    </div>
+
+    {% if error %}
+    <!-- Error State -->
+    <div class="ranking-section" style="border-color: var(--danger-color); background-color: rgba(220, 53, 69, 0.05);">
+        <div style="display: flex; align-items: center; gap: 15px; padding: 10px;">
+            <span style="font-size: 2rem;">⚠️</span>
+            <div>
+                <h3 style="margin: 0 0 5px 0; color: var(--danger-color);">Unable to Load Scorecard</h3>
+                <p style="margin: 0; color: var(--text-secondary);">{{ error }}</p>
+            </div>
+        </div>
+    </div>
+    {% else %}
+
+    <!-- Team Selection + Email All + Download All -->
+    <div class="ranking-section" style="margin-top: 20px;">
+        <div class="section-header">
+            <h2>Select Team</h2>
+        </div>
+        <form method="GET" action="{{ url_for('scorecard.scorecard_dashboard') }}" style="display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 240px;">
+                <label for="team_id" style="font-weight: 600; display: block; margin-bottom: 8px;">Team</label>
+                <select id="team_id" name="team_id" onchange="this.form.submit()"
+                        style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-content); color: var(--text-primary);">
+                    <option value="">-- Choose a team --</option>
+                    {% for team in teams %}
+                    <option value="{{ team.team_id }}" {% if selected_team and selected_team.team_id == team.team_id %}selected{% endif %}>
+                        {{ team.display_name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit" class="login-btn" style="font-weight: 600;">View Scorecard</button>
+            <button type="button"
+                    class="refresh-btn"
+                    style="font-weight: 600; cursor: pointer; margin-left: auto;"
+                    onclick="openEmailAllModal()">✉️ Email All Teams Their PDFs</button>
+            <a href="{{ url_for('scorecard.export_all_scorecards_zip') }}"
+               class="refresh-btn"
+               style="display: inline-flex; align-items: center; gap: 8px; font-weight: 600; text-decoration: none; cursor: pointer;"
+               title="Download every team's PDF in a single ZIP archive — useful when distributing files through another channel.">
+                🗜️ Download All PDFs (ZIP)
+            </a>
+        </form>
+        <p style="color: var(--text-secondary); margin: 12px 0 0 0; font-size: 0.85rem;">
+            Email All Teams sends one email per active team with <em>their own</em> PDF attached,
+            to the addresses stored in each team's metadata ("emails" field). Teams without an
+            email address are skipped. Download All PDFs bundles every team's PDF into a single
+            ZIP file if you'd rather distribute them yourself.
+        </p>
+    </div>
+
+    {% if selected_stats %}
+    <!-- View PDF + Email Actions -->
+    <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px; flex-wrap: wrap;">
+        <a href="{{ url_for('scorecard.export_scorecard_pdf', team_id=selected_team.team_id) }}"
+           class="refresh-btn" style="display: inline-flex; align-items: center; gap: 8px; font-weight: 600; text-decoration: none;"
+           target="_blank" rel="noopener">
+            📄 View Scorecard PDF
+        </a>
+        <button type="button"
+                class="refresh-btn"
+                style="font-weight: 600; cursor: pointer;"
+                onclick="openEmailModal()">✉️ Email This Team's PDF</button>
+    </div>
+
+    <!-- Best / Worst Service Highlights -->
+    <div class="stats-grid" style="margin-top: 25px;">
+        <div class="stat-card">
+            <div class="stat-icon">🏅</div>
+            <div class="stat-content">
+                <h3>Best Performing Service</h3>
+                {% if selected_stats.best_service %}
+                <p class="stat-value" style="color: var(--primary-green);">{{ selected_stats.best_service.name }}</p>
+                <p class="stat-subtitle">
+                    {{ selected_stats.best_service.score }} pts —
+                    {{ selected_stats.best_service.percentage|round(1) }}% of the best score for this service
+                </p>
+                {% else %}
+                <p class="stat-value">N/A</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon">⚠️</div>
+            <div class="stat-content">
+                <h3>Worst Performing Service</h3>
+                {% if selected_stats.worst_service %}
+                <p class="stat-value" style="color: var(--danger-color);">{{ selected_stats.worst_service.name }}</p>
+                <p class="stat-subtitle">
+                    {{ selected_stats.worst_service.score }} pts —
+                    {{ selected_stats.worst_service.percentage|round(1) }}% of the best score for this service
+                </p>
+                {% else %}
+                <p class="stat-value">N/A</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon">📊</div>
+            <div class="stat-content">
+                <h3>Services Tracked</h3>
+                <p class="stat-value">{{ selected_stats.total_services }}</p>
+                <p class="stat-subtitle">Across all scoring engines</p>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon">🎯</div>
+            <div class="stat-content">
+                <h3>Best Relative Performance</h3>
+                {% if selected_stats.best_service %}
+                <p class="stat-value">{{ selected_stats.best_service.percentage|round(1) }}%</p>
+                <p class="stat-subtitle">Your strongest service vs. the field</p>
+                {% else %}
+                <p class="stat-value">N/A</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Blue Team Placement -->
+        <div class="stat-card">
+            <div class="stat-icon">🥇</div>
+            <div class="stat-content">
+                <h3>Blue Team Placement</h3>
+                {% if blue_placements and selected_team.team_id in blue_placements %}
+                <p class="stat-value">{{ blue_placements[selected_team.team_id].rank }} / {{ num_active_teams }}</p>
+                <p class="stat-subtitle">Based on total service points</p>
+                {% else %}
+                <p class="stat-value">N/A</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Service Breakdown Table -->
+    <div class="ranking-section" style="margin-top: 30px;">
+        <div class="section-header">
+            <h2>Service Performance — {{ selected_stats.display_name }}</h2>
+        </div>
+        <p style="color: var(--text-secondary); margin-bottom: 15px; font-size: 0.9rem;">
+            Each service is compared against the best score achieved by <em>any</em> team for that
+            <em>same</em> service. A service at 100% means your team matched the top performer for
+            that service — regardless of how much that service is worth overall. Each scoring
+            engine monitors its own set of services, so a team's list may mix services from
+            several networks.
+        </p>
+        <p style="color: var(--text-secondary); margin-bottom: 15px; font-size: 0.9rem;">
+            <strong>SLA Δ Field:</strong> your SLA violation count minus the average violation
+            count for that service across all teams. Positive (+) means you took <em>more</em>
+            SLA hits than the field average — worth investigating. Negative (−) means you stayed
+            below the average.
+        </p>
+
+        <div class="table-container">
+            <table class="ranking-table">
+                <thead>
+                    <tr>
+                        <th>Service</th>
+                        <th>Engine</th>
+                        <th>Score</th>
+                        <th>Top Score (Field)</th>
+                        <th>% of Top</th>
+                        <th>Relative Performance</th>
+                        <th>Uptime (%)</th>
+                        <th>SLA Violations</th>
+                        <th>SLA Δ Field</th>
+                        <th>SLA Penalty</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for svc in selected_stats.services %}
+                    <tr>
+                        <td><strong>{{ svc.name }}</strong></td>
+                        <td><small class="text-muted">{{ svc.source_engines|join(', ') }}</small></td>
+                        <td>{{ svc.score }}</td>
+                        <td>{{ svc.benchmark }}</td>
+                        <td>{{ svc.percentage|round(1) }}%</td>
+                        <td style="min-width: 180px;">
+                            <div title="{{ svc.percentage|round(1) }}%"
+                                 style="background: var(--hover-bg); border-radius: 4px; height: 18px; overflow: hidden; border: 1px solid var(--border-color);">
+                                <div style="
+                                    height: 100%;
+                                    width: {{ svc.percentage|round(1) }}%;
+                                    background-color: {% if svc.percentage >= 90 %}var(--primary-green){% elif svc.percentage >= 70 %}#ffc107{% else %}var(--danger-color){% endif %};
+                                    transition: width 0.3s ease;
+                                "></div>
+                            </div>
+                        </td>
+                        <td style="font-weight: 600; color: {% if svc.uptime is not none %}{% if svc.uptime >= 90 %}var(--primary-green){% elif svc.uptime >= 70 %}#ffc107{% else %}var(--danger-color){% endif %}{% else %}var(--text-secondary){% endif %};">
+                            {% if svc.uptime is not none %}{{ svc.uptime|round(1) }}%{% else %}—{% endif %}
+                        </td>
+                        <td>{{ svc.sla_violations }}</td>
+                        <td title="Field average: {{ svc.field_avg_sla }}"
+                            style="font-weight: 600; color: {% if svc.sla_delta > 0 %}var(--danger-color){% elif svc.sla_delta < 0 %}var(--primary-green){% else %}var(--text-secondary){% endif %};">
+                            {% if svc.sla_delta > 0 %}+{% endif %}{{ svc.sla_delta }}
+                        </td>
+                        <td style="color: {% if svc.sla_penalty > 0 %}var(--danger-color){% else %}var(--text-secondary){% endif %};">
+                            {{ svc.sla_penalty }}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="10" style="text-align: center; padding: 20px; color: var(--text-secondary);">
+                            No service data available for this team.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ===== RED TEAM SECTION ===== -->
+    <div class="ranking-section" style="margin-top: 30px;">
+        <div class="section-header">
+            <h2>Red Team Activity — {{ selected_stats.display_name }}</h2>
+        </div>
+
+        {% if selected_red %}
+        <!-- Red Team Stat Cards -->
+        <div class="stats-grid" style="margin-top: 15px;">
+            <div class="stat-card">
+                <div class="stat-icon">🗡️</div>
+                <div class="stat-content">
+                    <h3>Successful Attacks</h3>
+                    <p class="stat-value">{{ selected_red.totals.total_attacks }}</p>
+                    <p class="stat-subtitle">Landed against this team</p>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon">📦</div>
+                <div class="stat-content">
+                    <h3>Unique Attack Types Hit</h3>
+                    <p class="stat-value">{{ selected_red.totals.refs_hit }} / {{ selected_red.totals.total_ref_types }}</p>
+                    <p class="stat-subtitle">refIDs that succeeded against you</p>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon">📉</div>
+                <div class="stat-content">
+                    <h3>Red Points Conceded</h3>
+                <p class="stat-value" style="color: var(--danger-color);">{{ selected_red.totals.total_red_points }}</p>
+                    <p class="stat-subtitle">Total points awarded to red team vs. you</p>
+                </div>
+            </div>
+
+            <!-- Red Team Placement -->
+            <div class="stat-card">
+                <div class="stat-icon">🥉</div>
+                <div class="stat-content">
+                    <h3>Red Team Placement</h3>
+                    {% if red_placements and selected_team.team_id in red_placements %}
+                    <p class="stat-value" style="color: var(--danger-color);">{{ red_placements[selected_team.team_id].rank }} / {{ num_active_teams }}</p>
+                    <p class="stat-subtitle">Based on total red points conceded</p>
+                    {% else %}
+                    <p class="stat-value">N/A</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <p style="color: var(--text-secondary); margin: 15px 0; font-size: 0.9rem;">
+            This table lists <strong>every</strong> attack type (refID) recorded during the
+            competition — including ones that never succeeded against this team. The
+            <strong>Δ Avg</strong> column compares this team's hit count against the average
+            count for that same refID across all teams. Negative (−) means fewer successful
+            attacks landed than the field average — better defense. A count of 0 with a
+            negative delta means the red team succeeded with that attack elsewhere but
+            never against this team.
+        </p>
+
+        <div class="table-container">
+            <table class="ranking-table">
+                <thead>
+                    <tr>
+                        <th>Ref ID</th>
+                        <th>Attack Type</th>
+                        <th>Hits Against You</th>
+                        <th>Field Average</th>
+                        <th>Δ Avg</th>
+                        <th>Points Conceded</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in selected_red.summary %}
+                    <tr>
+                        <td><code>{{ row.ref_id }}</code></td>
+                        <td>{{ row.type }}</td>
+                        <td><strong>{{ row.count }}</strong></td>
+                        <td>{{ row.field_avg }}</td>
+                        <td title="Your hits minus field average"
+                            style="font-weight: 600; color: {% if row.delta > 0 %}var(--danger-color){% elif row.delta < 0 %}var(--primary-green){% else %}var(--text-secondary){% endif %};">
+                            {% if row.delta > 0 %}+{% endif %}{{ row.delta }}
+                        </td>
+                        <td style="color: {% if row.points > 0 %}var(--danger-color){% else %}var(--text-secondary){% endif %};">
+                            {{ row.points }}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" style="text-align: center; padding: 20px; color: var(--text-secondary);">
+                            No red team activity recorded yet in the competition.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state" style="padding: 40px; text-align: center;">
+            <p style="color: var(--text-secondary);">No red team data available for this team.</p>
+        </div>
+        {% endif %}
+    </div>
+    {% elif selected_team_id %}
+    <div class="ranking-section" style="margin-top: 25px;">
+        <div class="empty-state" style="padding: 40px; text-align: center;">
+            <p style="color: var(--text-secondary);">No scorecard data available for the selected team.</p>
+        </div>
+    </div>
+    {% else %}
+    <div class="ranking-section" style="margin-top: 25px;">
+        <div class="empty-state" style="padding: 40px; text-align: center;">
+            <p style="color: var(--text-secondary);">Select a team from the dropdown above to view their service scorecard.</p>
+        </div>
+    </div>
+    {% endif %}
+
+    {% endif %}
+</div>
+
+<!-- ===== Email Modal: Selected Team ===== -->
+{% if selected_team %}
+<div id="email-modal" class="modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center;">
+    <div class="modal-content" style="background: var(--bg-content); border: 1px solid var(--border-color); border-radius: 8px; padding: 25px; width: 90%; max-width: 550px; box-shadow: 0 10px 30px rgba(0,0,0,0.3);">
+        <h3 style="margin-top:0;">Email Scorecard PDF{% if selected_stats %} — {{ selected_stats.display_name }}{% endif %}</h3>
+        <form method="POST" action="{{ url_for('scorecard.email_selected_team', team_number=selected_team.team_id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div style="margin-bottom: 12px;">
+                <label style="font-weight:600; display:block; margin-bottom:6px;">To <small class="text-muted">(comma-separated)</small></label>
+                <input type="text" name="email_to" required
+                       style="width:100%; padding:8px; border:1px solid var(--border-color); border-radius:4px; background: var(--bg-primary); color: var(--text-primary);"
+                       value="{{ team_emails.get(selected_team.team_id, '') }}"
+                       placeholder="advisor@school.edu, captain@school.edu">
+            </div>
+            <div style="margin-bottom: 12px;">
+                <label style="font-weight:600; display:block; margin-bottom:6px;">Subject</label>
+                <input type="text" name="email_subject" required
+                       style="width:100%; padding:8px; border:1px solid var(--border-color); border-radius:4px; background: var(--bg-primary); color: var(--text-primary);"
+                       value="Competition Feedback">
+            </div>
+            <div style="margin-bottom: 16px;">
+                <label style="font-weight:600; display:block; margin-bottom:6px;">Message</label>
+                <textarea name="email_message" rows="6"
+                          style="width:100%; padding:8px; border:1px solid var(--border-color); border-radius:4px; background: var(--bg-primary); color: var(--text-primary);">Hello,
+
+Attached is your competition feedback. Please review it with your coach and teammates to identify strengths and areas for improvement.
+
+Regards,
+Competition Staff</textarea>
+                <small class="text-muted">Placeholders: {schoolName}, {teamNum}</small>
+            </div>
+            <div style="display:flex; gap:10px; justify-content:flex-end;">
+                <button type="button" class="refresh-btn" onclick="closeEmailModal()">Cancel</button>
+                <button type="submit" class="login-btn" style="font-weight:600;">Send Email</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+<!-- ===== Email Modal: All Teams ===== -->
+<div id="email-all-modal" class="modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center;">
+    <div class="modal-content" style="background: var(--bg-content); border: 1px solid var(--border-color); border-radius: 8px; padding: 25px; width: 90%; max-width: 550px; box-shadow: 0 10px 30px rgba(0,0,0,0.3);">
+        <h3 style="margin-top:0;">Email All Teams Their Scorecard PDFs</h3>
+        <p class="text-muted" style="font-size: 0.9rem;">
+            Each active team with an "emails" value in its metadata receives one email containing
+            only <em>their own</em> PDF. Teams without email addresses are skipped and counted
+            in the result summary.
+        </p>
+        <form method="POST" action="{{ url_for('scorecard.email_all_teams') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div style="margin-bottom: 12px;">
+                <label style="font-weight:600; display:block; margin-bottom:6px;">Subject</label>
+                <input type="text" name="email_subject" required
+                       style="width:100%; padding:8px; border:1px solid var(--border-color); border-radius:4px; background: var(--bg-primary); color: var(--text-primary);"
+                       value="Competition Feedback">
+            </div>
+            <div style="margin-bottom: 16px;">
+                <label style="font-weight:600; display:block; margin-bottom:6px;">Message</label>
+                <textarea name="email_message" rows="6"
+                          style="width:100%; padding:8px; border:1px solid var(--border-color); border-radius:4px; background: var(--bg-primary); color: var(--text-primary);">Hello,
+
+Attached is your competition feedback. Please review it with your coach and teammates to identify strengths and areas for improvement.
+
+Regards,
+Competition Staff</textarea>
+                <small class="text-muted">Placeholders: {schoolName}, {teamNum}</small>
+            </div>
+            <div style="display:flex; gap:10px; justify-content:flex-end;">
+                <button type="button" class="refresh-btn" onclick="closeEmailAllModal()">Cancel</button>
+                <button type="submit" class="login-btn" style="font-weight:600;">Send to All Teams</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    function openEmailModal() {
+        document.getElementById('email-modal').style.display = 'flex';
+    }
+    function closeEmailModal() {
+        document.getElementById('email-modal').style.display = 'none';
+    }
+    function openEmailAllModal() {
+        document.getElementById('email-all-modal').style.display = 'flex';
+    }
+    function closeEmailAllModal() {
+        document.getElementById('email-all-modal').style.display = 'none';
+    }
+    // Close modal when clicking outside the dialog
+    window.addEventListener('click', function(e) {
+        if (e.target === document.getElementById('email-modal')) closeEmailModal();
+        if (e.target === document.getElementById('email-all-modal')) closeEmailAllModal();
+    });
+</script>
+
+<style>
+    .text-muted {
+        color: var(--text-secondary);
+        font-size: 0.85rem;
+    }
+
+    code {
+        background: var(--hover-bg);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 0.9em;
+    }
+</style>
+{% endblock %}

@@ -1,0 +1,1056 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard-container">
+    <!-- Page Header -->
+    <div class="page-header">
+        <h1>External Accounts Management</h1>
+        <p class="subtitle">Manage and generate external team accounts with random passwords. Generate a PDF/CSV to give to a team. Use the API to pull the username/password for loading into another system!</p>
+    </div>
+
+    <!-- External Accounts Listing -->
+    <div class="ranking-section">
+        <div class="section-header">
+            <h2>External Accounts</h2>
+        </div>
+
+        {% if grouped_accounts %}
+        <div class="table-container">
+            {% for acc_name, group_data in grouped_accounts.items() %}
+            <div class="account-group">
+                <div class="account-group-header" onclick="toggleAccountGroup('acc-{{ acc_name|replace(' ', '_')|replace('-', '--') }}')">
+                    <span class="expand-arrow" id="arrow-acc-{{ acc_name|replace(' ', '_')|replace('-', '--') }}">▶</span>
+                    <strong>{{ acc_name }}</strong>
+                    <span class="account-count">{{ group_data.teams|length }} team(s)</span>
+                    
+                    <!-- Delete Entire Account Name Button -->
+                    <form method="POST" 
+                        action="{{ url_for('ext_accounts.delete_entire_account_name', account_name=acc_name) }}" 
+                        style="display: inline; margin-left: auto;"
+                        onsubmit="return confirm('WARNING: This will delete ALL {{ group_data.teams|length }} teams accounts for {{ acc_name }}. This cannot be undone.');">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="delete-all-btn" title="Delete All Accounts for this Name Across All Teams">
+                            🗑️ Delete All
+                        </button>
+                    </form>
+                </div>
+                
+                <div class="account-group-content" id="content-acc-{{ acc_name|replace(' ', '_')|replace('-', '--') }}" style="display: none;">
+                    
+                    {% if group_data.account_url %}
+                    <div class="account-url-banner">
+                        <strong>Target URL:</strong> <a href="{{ group_data.account_url }}" target="_blank">{{ group_data.account_url }}</a>
+                    </div>
+                    {% endif %}
+
+                    {% for team_num, team_accounts in group_data.teams.items() %}
+                    <div class="team-subgroup">
+                        <div class="team-subgroup-header" onclick="toggleTeamGroup('acc-{{ acc_name|replace(' ', '_')|replace('-', '--') }}-team-{{ team_num }}')">
+                            <span class="expand-arrow" id="arrow-acc-{{ acc_name|replace(' ', '_')|replace('-', '--') }}-team-{{ team_num }}">▶</span>
+                            <span class="team-label">Team {{ team_num }}</span>
+                            <span class="sub-count">{{ team_accounts|length }} account(s)</span>
+                            
+                            <form method="POST" 
+                                  action="{{ url_for('ext_accounts.delete_account_group', team_number=team_num, account_name=acc_name) }}" 
+                                  style="display: inline; margin-left: auto;"
+                                  onsubmit="return confirm('Delete ALL {{ team_accounts|length }} accounts for Team {{ team_num }} - {{ acc_name }}?');">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="delete-group-btn" title="Delete All Accounts for this Team">
+                                    🗑️ Delete Team
+                                </button>
+                            </form>
+                        </div>
+                        
+                        <div class="team-subgroup-content" id="content-acc-{{ acc_name|replace(' ', '_')|replace('-', '--') }}-team-{{ team_num }}" style="display: none;">
+                            <table class="ranking-table">
+                                <thead>
+                                    <tr>
+                                        <th>Username</th>
+                                        <th>Password</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for account in team_accounts %}
+                                    <tr>
+                                        <td class="username-cell">{{ account.account_username }}</td>
+                                        <td class="password-cell">
+                                            <span class="password-hidden" data-password="{{ account.account_password }}">••••••••</span>
+                                            <button type="button" class="show-password-btn" onclick="togglePasswordVisibility(this)">👁️</button>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div style="padding: 30px; text-align: center; color: var(--text-secondary);">
+            No external accounts found. Generate accounts below to get started.
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Export Options -->
+    <div class="ranking-section" style="margin-top: 30px;">
+        <div class="section-header">
+            <h2>Export Accounts</h2>
+        </div>
+        <div class="form-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+            <div class="form-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+                <a href="{{ url_for('ext_accounts.export_master_pdf') }}" 
+                   class="export-btn" 
+                   style="text-decoration: none; text-align: center; display: block;" 
+                   target="_blank">
+                    📄 Download Master PDF
+                </a>
+                <a href="{{ url_for('ext_accounts.export_all_team_pdfs_zip') }}" 
+                   class="export-btn" 
+                   style="text-decoration: none; text-align: center; display: block;">
+                    📦 Download All Team PDFs (ZIP)
+                </a>
+                <a href="{{ url_for('ext_accounts.export_master_csv') }}" 
+                   class="export-btn" 
+                   style="text-decoration: none; text-align: center; display: block;">
+                    📊 Download Master CSVs (ZIP)
+                </a>
+                <button type="button" onclick="openEmailModal('all')" class="export-btn" style="text-decoration: none; text-align: center; display: block;">
+                    ✉️ Email All Teams
+                </button>
+            </div>
+        </div>
+        
+        <div style="margin-top: 20px;">
+            <h3>Export Specific Team</h3>
+            <div class="form-group" style="display: flex; gap: 10px; align-items: flex-end;">
+                <div style="flex: 1;">
+                    <label for="export_team_select">Select Team</label>
+                    <select id="export_team_select" style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;">
+                        <option value="">-- Select Team --</option>
+                        {% for team in active_teams %}
+                        <option value="{{ team.team_number }}">{{ team.team_number }} - {{ team.team_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div style="display: flex; gap: 10px;">
+                    <button type="button" onclick="exportTeam('pdf')" class="login-btn" style="padding: 10px 20px;">PDF</button>
+                    <button type="button" onclick="exportTeam('csv')" class="login-btn" style="padding: 10px 20px;">CSVs (ZIP)</button>
+                    <button type="button" onclick="openEmailModal('team')" class="login-btn" style="padding: 10px 20px;">📧 Email</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Single Account Section -->
+    <div class="ranking-section" style="margin-top: 30px;">
+        <div class="section-header">
+            <h2>Add Single Account</h2>
+            <p class="subtitle">Manually add one account with a defined password</p>
+        </div>
+
+        <form method="POST" action="{{ url_for('ext_accounts.add_single_account') }}" id="addSingleForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="single_team_number">Team</label>
+                    <select name="single_team_number" id="single_team_number" required>
+                        <option value="">-- Select Team --</option>
+                        {% for team in active_teams %}
+                        <option value="{{ team.team_number }}">Team {{ team.team_number }} - {{ team.team_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="single_account_name">System Name</label>
+                    <input type="text" name="single_account_name" id="single_account_name" placeholder="e.g., GitHub, NETLAB" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="single_account_url">System URL</label>
+                    <input type="url" name="single_account_url" id="single_account_url" placeholder="https://example.com (optional)">
+                </div>
+
+                <div class="form-group">
+                    <label for="single_username">Username</label>
+                    <input type="text" name="single_username" id="single_username" placeholder="e.g., team1admin" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="single_password">Password</label>
+                    <input type="text" name="single_password" id="single_password" placeholder="Enter password" required>
+                </div>
+            </div>
+
+            <div style="margin-top: 20px;">
+                <button type="submit" class="login-btn" style="padding: 12px 32px; font-size: 1rem;">
+                    ➕ Add Account
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Generate New Accounts Section -->
+    <div class="ranking-section" style="margin-top: 30px;">
+        <div class="section-header">
+            <h2>Generate New Accounts</h2>
+            <p class="subtitle">Use this to generate random passwords for external accounts</p>
+        </div>
+
+        <form method="POST" action="{{ url_for('ext_accounts.generate_accounts') }}" id="generateAccountsForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="scope">Scope</label>
+                    <select name="scope" id="scope" onchange="toggleTeamSelection()" required>
+                        <option value="all">All Active Teams</option>
+                        <option value="specific">Specific Team</option>
+                    </select>
+                </div>
+
+                <div class="form-group" id="teamSelection" style="display: none;">
+                    <label for="team_number">Team Number</label>
+                    <select name="team_number" id="team_number">
+                        {% for team in active_teams %}
+                        <option value="{{ team.team_number }}">Team {{ team.team_number }} - {{ team.team_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="account_name">System Name</label>
+                    <input type="text" name="account_name" id="account_name" placeholder="e.g., NETLAB, NETLAB-DAY2, etc" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="account_url">System URL</label>
+                    <input type="url" name="account_url" id="account_url" placeholder="https://example.com (optional)">
+                </div>
+
+                <div class="form-group">
+                    <label for="count_per_team">Accounts Per Team</label>
+                    <input type="number" name="count_per_team" id="count_per_team" min="1" max="67600" value="9" required>
+                    <small>1-67600 accounts (a-z + aa-zz + 1-100)</small>
+                </div>
+
+                <div class="form-group" style="grid-column: 1 / -1;">
+                    <label for="username_pattern">Username Pattern</label>
+                    <input type="text" name="username_pattern" id="username_pattern" 
+                           placeholder="team{team:02}{letter}" 
+                           value="team{team:02}{letter}" 
+                           required>
+                    
+                    <div class="pattern-help">
+                        <strong>Available placeholders (all optional):</strong>
+                        <ul>
+                            <li><code>{team}</code> - Team number (e.g., 1, 2, 10)</li>
+                            <li><code>{team:02}</code> - Zero-padded to 2 digits (e.g., 01, 02)</li>
+                            <li><code>{team:03}</code> - Zero-padded to 3 digits (e.g., 001, 002)</li>
+                            <li><code>{letter}</code> - Auto-generated letter (a, b, c...)</li>
+                            <li><code>{number}</code> - Sequential number (1, 2, 3...)</li>
+                        </ul>
+                        
+                        <strong>Examples:</strong>
+                        <div class="example-grid">
+                            <div class="example-item">
+                                <code>team{team}{letter}</code>
+                                <span>→ team1a, team1b, team2a</span>
+                            </div>
+                            <div class="example-item">
+                                <code>team{team}{number}</code>
+                                <span>→ team11, team12, team21</span>
+                            </div>
+                            <div class="example-item">
+                                <code>team{team}{letter}{number}</code>
+                                <span>→ team1a1, team1a2, team1b1</span>
+                            </div>
+                            <div class="example-item">
+                                <code>{letter}{number}</code>
+                                <span>→ a1, a2, b1, b2</span>
+                            </div>
+                            <div class="example-item">
+                                <code>user{number}</code>
+                                <span>→ user1, user2, user3</span>
+                            </div>
+                        </div>
+                        
+                        <small style="color: var(--text-secondary); margin-top: 8px; display: block;">
+                            All placeholders are optional. Combine {letter} and {number} for complex patterns. {letter} increments before {number} when both are present.
+                        </small>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Password Complexity Settings -->
+            <div class="form-group" style="grid-column: 1 / -1;">
+                <label>Password Settings</label>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-top: 8px;">
+                    <div>
+                        <label for="password_length" style="font-weight: 600; font-size: 0.85rem;">Length</label>
+                        <input type="number" name="password_length" id="password_length" 
+                            min="4" max="128" value="8" 
+                            style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                    </div>
+                    
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                        <label style="font-weight: 600; font-size: 0.85rem;">Include:</label>
+                        <label style="display: flex; align-items: center; gap: 6px; font-size: 0.9rem; cursor: pointer;">
+                            <input type="checkbox" name="use_upper" checked style="transform: scale(1.2);"> Uppercase (A-Z)
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 6px; font-size: 0.9rem; cursor: pointer;">
+                            <input type="checkbox" name="use_lower" checked style="transform: scale(1.2);"> Lowercase (a-z)
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 6px; font-size: 0.9rem; cursor: pointer;">
+                            <input type="checkbox" name="use_digit" checked style="transform: scale(1.2);"> Numbers (0-9)
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 6px; font-size: 0.9rem; cursor: pointer;">
+                            <input type="checkbox" name="use_special" style="transform: scale(1.2);"> Special (!@#$...)
+                        </label>
+                    </div>
+
+                    <div style="display: flex; align-items: center; gap: 6px; font-size: 0.9rem; cursor: pointer; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-color);">
+                        <input type="checkbox" name="use_shared_password" id="use_shared_password" style="transform: scale(1.2);">
+                        <label for="use_shared_password" style="margin: 0; font-weight: 600;">
+                            Use same shared password per Team
+                        </label>
+                    </div>
+                    <small style="color: var(--text-secondary); margin-top: 4px; display: block; margin-left: 24px;">
+                        If checked, all accounts for a specific team will share the same password. 
+                        (Default: Each account gets a unique random password).
+                    </small>
+                </div>
+                <small style="color: var(--text-secondary); margin-top: 4px; display: block;">
+                    Minimum length: 4 characters. Select at least one type.
+                </small>
+            </div>
+
+            <!-- Live Preview Section -->
+            <div class="preview-section" id="previewSection" style="display: none;">
+                <div class="preview-header">
+                    <strong>🔍 Username Preview</strong>
+                    <span class="preview-info" id="previewInfo"></span>
+                </div>
+                <div class="preview-content" id="previewContent">
+                    <!-- Preview will be populated by JavaScript -->
+                </div>
+                <div class="preview-warning" id="previewWarning" style="display: none;">
+                    <span class="warning-icon">⚠️</span>
+                    <span class="warning-message" id="warningMessage"></span>
+                </div>
+                <div class="preview-error" id="previewError" style="display: none;">
+                    <span class="error-icon">⚠️</span>
+                    <span class="error-message" id="errorMessage"></span>
+                </div>
+            </div>
+
+            
+
+            <div style="margin-top: 20px;">
+                <button type="submit" class="login-btn" style="padding: 12px 32px; font-size: 1rem;">
+                    🔐 Generate Accounts
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Replicate Accounts Section -->
+    <div class="ranking-section" style="margin-top: 30px;">
+        <div class="section-header">
+            <h2>Replicate Accounts to New System</h2>
+            <p class="subtitle">Copy existing usernames/passwords to a new system name (e.g., NETLAB Day 2)</p>
+        </div>
+
+        <form method="POST" action="{{ url_for('ext_accounts.replicate_accounts') }}" id="replicateForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="rep_scope">Scope</label>
+                    <select name="rep_scope" id="rep_scope" onchange="toggleRepTeamSelection()" required>
+                        <option value="all">All Teams</option>
+                        <option value="specific">Specific Team</option>
+                    </select>
+                </div>
+
+                <div class="form-group" id="repTeamSelection" style="display: none;">
+                    <label for="rep_team_number">Team</label>
+                    <select name="rep_team_number" id="rep_team_number">
+                        {% for team in active_teams %}
+                        <option value="{{ team.team_number }}">Team {{ team.team_number }} - {{ team.team_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="rep_source_name">Source System Name</label>
+                    <select name="rep_source_name" id="rep_source_name" required>
+                        <option value="">-- Select System --</option>
+                        {% for name in distinct_names %}
+                        <option value="{{ name }}">{{ name }}</option>
+                        {% endfor %}
+                    </select>
+                    <small>Usernames and passwords will be copied exactly</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="rep_new_name">New System Name</label>
+                    <input type="text" name="rep_new_name" id="rep_new_name" placeholder="e.g., NETLAB-DAY2" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="rep_new_url">New System URL</label>
+                    <input type="url" name="rep_new_url" id="rep_new_url" placeholder="https://example.com (optional)">
+                </div>
+            </div>
+
+            <div style="margin-top: 20px;">
+                <button type="submit" class="login-btn" style="padding: 12px 32px; font-size: 1rem;"
+                        onclick="return confirm('Copy all accounts from the source system to the new system name? Passwords will be identical.');">
+                    📋 Copy Accounts
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Email Teams Modal -->
+    <div id="emailModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">
+                <h3 id="emailModalTitle">Email Team</h3>
+                <span class="close-modal" onclick="closeEmailModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="emailForm" method="POST" action="">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                    <div class="form-group" id="emailToGroup">
+                        <label for="email_to">To (comma-separated)</label>
+                        <input type="text" name="email_to" id="email_to"
+                               placeholder="coach@example.edu, alt@example.edu">
+                        <small>Pre-filled from the team's metadata "emails" value, if set.</small>
+                    </div>
+
+                    <div class="form-group" style="margin-top: 15px;">
+                        <label for="email_subject">Subject *</label>
+                        <input type="text" name="email_subject" id="email_subject"
+                               value="Competition Account Credentials" required>
+                    </div>
+
+                    <div class="form-group" style="margin-top: 15px;">
+                        <label for="email_message">Message</label>
+                        <textarea name="email_message" id="email_message" rows="8"
+                                  style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px; resize: vertical;"></textarea>
+                        <small>Placeholders: <code>{schoolName}</code> — the team's school (blank if not set),
+                            <code>{teamNum}</code> — the team number.</small>
+                    </div>
+
+                    <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+                        <button type="button" class="refresh-btn" onclick="closeEmailModal()">Cancel</button>
+                        <button type="submit" class="login-btn">✉️ Send Email</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    // --- Debounce Function ---
+    function debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    }
+
+    // --- Live Preview ---
+    async function updatePreview() {
+        const pattern = document.getElementById('username_pattern').value;
+        const count = document.getElementById('count_per_team').value;
+        const scope = document.getElementById('scope').value;
+        const teamSelect = document.getElementById('team_number');
+        const teamNum = scope === 'specific' && teamSelect.value ? parseInt(teamSelect.value) : 1;
+        
+        const previewSection = document.getElementById('previewSection');
+        const previewContent = document.getElementById('previewContent');
+        const previewError = document.getElementById('previewError');
+        const previewWarning = document.getElementById('previewWarning');
+        const errorMessage = document.getElementById('errorMessage');
+        const warningMessage = document.getElementById('warningMessage');
+        const previewInfo = document.getElementById('previewInfo');
+        
+        previewSection.style.display = 'block';
+        previewError.style.display = 'none';
+        previewWarning.style.display = 'none';
+        previewContent.innerHTML = '<div class="preview-loading">Loading preview...</div>';
+        
+        try {
+            const response = await fetch('/externalAccounts/preview-username', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('[name=csrf_token]').value
+                },
+                body: JSON.stringify({
+                    pattern: pattern,
+                    team_num: teamNum,
+                    count: parseInt(count)
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok && data.success) {
+                if (data.warning) {
+                    warningMessage.textContent = data.warning;
+                    previewWarning.style.display = 'flex';
+                }
+                
+                previewContent.innerHTML = `
+                    <div class="preview-usernames">
+                        ${data.usernames.map((username, index) => `
+                            <div class="preview-item">
+                                <span class="preview-index">${index + 1}.</span>
+                                <code>${username}</code>
+                            </div>
+                        `).join('')}
+                        ${data.usernames.length < data.total_possible ? `
+                            <div class="preview-more">
+                                ... and ${data.total_possible - data.usernames.length} more
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+                previewInfo.textContent = `Showing first ${data.usernames.length} of ${data.total_possible} usernames`;
+            } else {
+                throw new Error(data.error || 'Failed to generate preview');
+            }
+        } catch (error) {
+            previewContent.innerHTML = '';
+            errorMessage.textContent = error.message;
+            previewError.style.display = 'flex';
+        }
+    }
+
+    const debouncedPreview = debounce(updatePreview, 500);
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const patternInput = document.getElementById('username_pattern');
+        const countInput = document.getElementById('count_per_team');
+        const scopeSelect = document.getElementById('scope');
+        const teamSelect = document.getElementById('team_number');
+        
+        patternInput.addEventListener('input', debouncedPreview);
+        countInput.addEventListener('input', debouncedPreview);
+        scopeSelect.addEventListener('change', () => {
+            toggleTeamSelection();
+            debouncedPreview();
+        });
+        teamSelect.addEventListener('change', debouncedPreview);
+        
+        updatePreview();
+    });
+
+    function toggleAccountGroup(id) {
+        const content = document.getElementById(`content-${id}`);
+        const arrow = document.getElementById(`arrow-${id}`);
+        const isVisible = content.style.display !== 'none';
+
+        if (isVisible) {
+            content.style.display = 'none';
+            arrow.textContent = '▶';
+        } else {
+            content.style.display = 'block';
+            arrow.textContent = '▼';
+        }
+    }
+
+    function toggleTeamGroup(id) {
+        const content = document.getElementById(`content-${id}`);
+        const arrow = document.getElementById(`arrow-${id}`);
+        const isVisible = content.style.display !== 'none';
+
+        if (isVisible) {
+            content.style.display = 'none';
+            arrow.textContent = '▶';
+        } else {
+            content.style.display = 'block';
+            arrow.textContent = '▼';
+        }
+    }
+
+    function toggleTeamSelection() {
+        const scope = document.getElementById('scope').value;
+        const teamSelection = document.getElementById('teamSelection');
+        teamSelection.style.display = scope === 'specific' ? 'block' : 'none';
+    }
+
+    function togglePasswordVisibility(btn) {
+        const span = btn.previousElementSibling;
+        const password = span.getAttribute('data-password');
+        
+        if (span.classList.contains('password-hidden')) {
+            span.textContent = password;
+            span.classList.remove('password-hidden');
+            btn.textContent = '🙈';
+        } else {
+            span.textContent = '••••••••';
+            span.classList.add('password-hidden');
+            btn.textContent = '👁️';
+        }
+    }
+
+    function exportTeam(type) {
+        const teamNum = document.getElementById('export_team_select').value;
+        if (!teamNum) {
+            alert('Please select a team first.');
+            return;
+        }
+        
+        const url = type === 'pdf' 
+            ? "{{ url_for('ext_accounts.export_team_pdf', team_number=0) }}".replace('0', teamNum)
+            : "{{ url_for('ext_accounts.export_team_csv', team_number=0) }}".replace('0', teamNum);
+        
+        window.location.href = url;
+    }
+
+    function toggleRepTeamSelection() {
+        const scope = document.getElementById('rep_scope').value;
+        document.getElementById('repTeamSelection').style.display =
+            scope === 'specific' ? 'block' : 'none';
+    }
+
+    const DEFAULT_EMAIL_MESSAGE = '{schoolName} will be Team {teamNum} for the competition.\n\nPlease find the attached password lists.\n\nIf you have any issues/questions, please reach out to the competition staff.';
+
+    const teamEmails = {{ team_emails|tojson }};
+    const emailTeamUrl = "{{ url_for('ext_accounts.email_team', team_number=0) }}";
+    const emailAllUrl = "{{ url_for('ext_accounts.email_all_teams') }}";
+
+    let emailMode = 'team';   // 'team' or 'all'
+    let selectedEmailTeam = null;
+
+    function openEmailModal(mode) {
+        emailMode = mode;
+        const modal = document.getElementById('emailModal');
+        const form = document.getElementById('emailForm');
+        const toGroup = document.getElementById('emailToGroup');
+        const toInput = document.getElementById('email_to');
+        const title = document.getElementById('emailModalTitle');
+
+        document.getElementById('email_message').value = DEFAULT_EMAIL_MESSAGE;
+
+        if (mode === 'team') {
+            const teamNum = document.getElementById('export_team_select').value;
+            if (!teamNum) {
+                alert('Please select a team first.');
+                return;
+            }
+            selectedEmailTeam = teamNum;
+            title.textContent = 'Email Team ' + teamNum;
+            toGroup.style.display = '';
+            toInput.required = true;
+            // Pre-load from the team's metadata, if defined
+            toInput.value = teamEmails[teamNum] || '';
+            form.action = emailTeamUrl.slice(0, emailTeamUrl.lastIndexOf('/')) + '/' + teamNum;
+        } else {
+            selectedEmailTeam = null;
+            title.textContent = 'Email All Teams';
+            toGroup.style.display = 'none';
+            toInput.required = false;
+            toInput.value = '';
+            form.action = emailAllUrl;
+        }
+
+        modal.style.display = 'flex';
+    }
+
+    function closeEmailModal() {
+        document.getElementById('emailModal').style.display = 'none';
+    }
+</script>
+
+<style>
+    /* Account Group Styles (Level 1) */
+    .account-group {
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        margin-bottom: 10px;
+        overflow: hidden;
+        background-color: var(--bg-content);
+    }
+
+    .account-group-header {
+        padding: 12px 16px;
+        background-color: var(--hover-bg);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        transition: background-color var(--transition-speed);
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .account-group-header:hover {
+        background-color: var(--active-bg);
+    }
+
+    .expand-arrow {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        transition: transform var(--transition-speed);
+    }
+
+    .account-count {
+        margin-left: auto;
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+    }
+
+    .account-group-content {
+        padding: 0;
+    }
+
+    /* Team Subgroup Styles (Level 2) */
+    .team-subgroup {
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .team-subgroup:last-child {
+        border-bottom: none;
+    }
+
+    .team-subgroup-header {
+        padding: 10px 16px 10px 40px;
+        background-color: rgba(0,0,0,0.02);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        transition: background-color var(--transition-speed);
+    }
+
+    .team-subgroup-header:hover {
+        background-color: rgba(0,0,0,0.05);
+    }
+
+    .team-label {
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .sub-count {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+    }
+
+    .team-subgroup-content {
+        padding: 16px;
+        background-color: var(--bg-content);
+    }
+
+    .account-url-banner {
+        background-color: var(--hover-bg);
+        padding: 10px 16px;
+        border-radius: 6px;
+        margin: 16px;
+        border-left: 4px solid var(--primary-blue);
+    }
+
+    .account-url-banner a {
+        color: var(--primary-blue);
+        text-decoration: none;
+    }
+
+    .account-url-banner a:hover {
+        text-decoration: underline;
+    }
+
+    /* Password Display */
+    .password-cell {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        justify-content: center;
+    }
+
+    .password-hidden {
+        font-family: monospace;
+        letter-spacing: 2px;
+    }
+
+    .show-password-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 1.1rem;
+        padding: 4px;
+        transition: transform var(--transition-speed);
+    }
+
+    .show-password-btn:hover {
+        transform: scale(1.1);
+    }
+
+    /* Delete Group Button */
+    .delete-group-btn {
+        background: none;
+        border: 1px solid #dc3545;
+        color: #dc3545;
+        padding: 4px 10px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.8rem;
+        font-weight: 600;
+        transition: all var(--transition-speed);
+    }
+
+    .delete-group-btn:hover {
+        background-color: #dc3545;
+        color: white;
+    }
+
+    /* Pattern Help */
+    .pattern-help {
+        margin-top: 8px;
+        padding: 12px;
+        background-color: var(--hover-bg);
+        border-radius: 6px;
+        font-size: 0.85rem;
+        border-left: 3px solid var(--primary-blue);
+    }
+
+    .pattern-help strong {
+        display: block;
+        margin-bottom: 8px;
+        color: var(--text-primary);
+    }
+
+    .pattern-help ul {
+        margin: 8px 0;
+        padding-left: 20px;
+    }
+
+    .pattern-help li {
+        margin: 4px 0;
+        line-height: 1.4;
+    }
+
+    .pattern-help code {
+        background-color: var(--bg-content);
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-family: monospace;
+        font-size: 0.8rem;
+        color: var(--primary-blue);
+    }
+
+    .example-grid {
+        display: grid;
+        gap: 8px;
+        margin: 12px 0;
+    }
+
+    .example-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px;
+        background-color: var(--bg-content);
+        border-radius: 4px;
+        font-size: 0.8rem;
+    }
+
+    .example-item code {
+        flex-shrink: 0;
+        min-width: 140px;
+    }
+
+    .example-item span {
+        color: var(--text-secondary);
+        font-size: 0.75rem;
+    }
+
+    /* Live Preview Section */
+    .preview-section {
+        margin-top: 20px;
+        padding: 16px;
+        background-color: var(--hover-bg);
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border-color);
+    }
+
+    .preview-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .preview-header strong {
+        color: var(--text-primary);
+    }
+
+    .preview-info {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+    }
+
+    .preview-content {
+        min-height: 60px;
+    }
+
+    .preview-loading {
+        color: var(--text-secondary);
+        font-style: italic;
+        padding: 12px 0;
+    }
+
+    .preview-usernames {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 8px;
+    }
+
+    .preview-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        background-color: var(--bg-content);
+        border-radius: 4px;
+        border: 1px solid var(--border-color);
+    }
+
+    .preview-index {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        width: 20px;
+    }
+
+    .preview-item code {
+        font-family: monospace;
+        font-size: 0.9rem;
+        color: var(--text-primary);
+    }
+
+    .preview-more {
+        grid-column: 1 / -1;
+        text-align: center;
+        color: var(--text-secondary);
+        font-style: italic;
+        padding: 8px;
+    }
+
+    .preview-warning, .preview-error {
+        display: none;
+        align-items: center;
+        gap: 8px;
+        padding: 10px;
+        margin-top: 12px;
+        border-radius: 4px;
+        font-size: 0.85rem;
+    }
+
+    .preview-warning {
+        background-color: rgba(255, 193, 7, 0.1);
+        border: 1px solid #ffc107;
+        color: #856404;
+    }
+
+    .preview-error {
+        background-color: rgba(220, 53, 69, 0.1);
+        border: 1px solid #dc3545;
+        color: #721c24;
+    }
+
+    .warning-icon, .error-icon {
+        font-size: 1.1rem;
+    }
+
+    /* Form Styles */
+    .form-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 20px;
+        margin-bottom: 20px;
+    }
+
+    .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .form-group label {
+        font-weight: 600;
+        font-size: 0.9rem;
+        color: var(--text-primary);
+    }
+
+    .form-group input,
+    .form-group select {
+        padding: 10px 12px;
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        background-color: var(--bg-content);
+        color: var(--text-primary);
+        font-size: 0.95rem;
+        transition: border-color var(--transition-speed);
+    }
+
+    .form-group input:focus,
+    .form-group select:focus {
+        outline: none;
+        border-color: var(--primary-blue);
+    }
+
+    .form-group small {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .form-grid {
+            grid-template-columns: 1fr;
+        }
+        
+        .preview-usernames {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    /* Delete Entire Name Button (Redder/Darker to indicate higher risk) */
+    .delete-all-btn {
+        background: none;
+        border: 1px solid #b71c1c; /* Darker red */
+        color: #b71c1c;
+        padding: 4px 10px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.8rem;
+        font-weight: 600;
+        transition: all var(--transition-speed);
+        margin-left: 10px;
+    }
+
+    .delete-all-btn:hover {
+        background-color: #b71c1c;
+        color: white;
+    }
+</style>
+{% endblock %}

@@ -1,0 +1,513 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard-container">
+    <!-- Page Header -->
+    <div class="page-header">
+        <h1>Orange Team Configuration</h1>
+        <p class="subtitle">Manage task templates and scoring calculations</p>
+    </div>
+
+    <!-- SECTION 1: Task Templates (on top - used more frequently) -->
+    <div class="ranking-section">
+        <div class="section-header">
+            <h2>Task Templates</h2>
+            <button class="refresh-btn" onclick="openAddModal()">
+                ➕ Add New Template
+            </button>
+        </div>
+
+        {% if templates %}
+        <p style="color: var(--text-secondary); margin-bottom: 15px; font-size: 0.9rem;">
+            {{ templates|length }} template(s) available. Inactive templates won't be available for assignment.
+        </p>
+        
+        <div class="table-container">
+            <table class="ranking-table">
+                <thead>
+                    <tr>
+                        <th style="width: 50px;">ID</th>
+                        <th>Type</th>
+                        <th>Name</th>
+                        <th>Points Possible</th>
+                        <th>Status</th>
+                        <th style="width: 200px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for template in templates %}
+                    <tr class="{% if not template.is_active %}inactive-row{% endif %}">
+                        <td><code>{{ template.id }}</code></td>
+                        <td><span class="status-badge">{{ template.task_type }}</span></td>
+                        <td>
+                            <strong>{{ template.name }}</strong>
+                            <br><small style="color: var(--text-secondary);">
+                                {{ template.scenario_prompt[:100] }}{% if template.scenario_prompt|length > 100 %}...{% endif %}
+                            </small>
+                        </td>
+                        <td>{{ template.points_possible }}</td>
+                        <td>
+                            {% if template.is_active %}
+                                <span class="status-badge success">Active</span>
+                            {% else %}
+                                <span class="status-badge warning">Inactive</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <button type="button" class="metadata-btn" onclick="openEditModal({{ template.id }})" title="Edit">
+                                ✏️
+                            </button>
+                            <button type="button" class="approve-score-btn" onclick="toggleTemplate({{ template.id }})" title="Toggle Status">
+                                {% if template.is_active %}🔴{% else %}🟢{% endif %}
+                            </button>
+                            <button type="button" class="delete-score-btn" onclick="deleteTemplate({{ template.id }})" title="Delete">
+                                🗑️
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state" style="padding: 40px;">
+            <p style="color: var(--text-secondary);">No task templates created yet.</p>
+            <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                Click "Add New Template" to create your first task template.
+            </p>
+        </div>
+        {% endif %}
+    </div>
+
+    <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 30px 0;">
+
+    <!-- SECTION 2: Scoring Calculation Configuration -->
+    <div class="ranking-section">
+        <div class="section-header">
+            <h2>Scoring Configuration</h2>
+            <button type="button" class="refresh-btn" onclick="openImportExportModal()">
+                📋 Import / Export JSON
+            </button>
+        </div>
+        
+        <p style="color: var(--text-secondary); margin-bottom: 20px;">
+            Define how orange team scores are calculated. Scores are pulled from the 
+            <strong>Score</strong> table where <code>category='orange'</code>.
+        </p>
+
+        <div style="background: var(--hover-bg); padding: 20px; border-radius: 6px; border: 1px solid var(--border-color);">
+            <form action="{{ url_for('orange_config.update_scoring_config') }}" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div style="margin-bottom: 20px;">
+                    <label style="font-weight: 600; display: block; margin-bottom: 8px;">
+                        Normalization Settings
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+                        <input type="checkbox" name="normalize_enabled" 
+                               {% if current_config.normalize_enabled %}checked{% endif %}
+                               style="transform: scale(1.3); cursor: pointer;">
+                        <span>Enable Min/Max Normalization</span>
+                    </label>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px;">
+                        <div>
+                            <label style="font-size: 0.8rem;">Min Score (0 - 100,000)</label>
+                            <input type="number" step="0.1" min="0" max="100000" name="min_score" 
+                                   value="{{ current_config.min_score|default(0) }}"
+                                   style="width: 100%; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px;">
+                        </div>
+                        <div>
+                            <label style="font-size: 0.8rem;">Max Score (0 - 100,000)</label>
+                            <input type="number" step="0.1" min="0" max="100000" name="max_score" 
+                                   value="{{ current_config.max_score|default(100) }}"
+                                   style="width: 100%; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px;">
+                        </div>
+                    </div>
+                    <small style="color: var(--text-secondary); display: block; margin-top: 6px;">
+                        When enabled, raw scores are normalized to the configured range based on the actual min/max scores of the teams.
+                    </small>
+                </div>
+
+                <div style="display: flex; gap: 10px; align-items: center; margin-top: 10px;">
+                    <button type="submit" class="login-btn" style="font-weight: 600;">
+                        💾 Save Configuration
+                    </button>
+                    <span style="color: var(--text-secondary); font-size: 0.85rem;">
+                        Current formula: <code>{{ current_config.formula|default('raw_score') }}</code>
+                    </span>
+                </div>
+            </form>
+        </div>
+
+        <!-- Score Preview Table -->
+        <div style="margin-top: 30px;">
+            <h3 style="margin-bottom: 15px;">Score Preview (Current Calculations)</h3>
+            
+            {% if scoring_stats.teams_with_scores > 0 %}
+            <p style="color: var(--text-secondary); margin-bottom: 15px; font-size: 0.9rem;">
+                <strong>Min Score:</strong> {{ scoring_stats.min_team_score }} | 
+                <strong>Max Score:</strong> {{ scoring_stats.max_team_score }} |
+                <strong>Average:</strong> {{ scoring_stats.avg_score }} | 
+                <strong>Median:</strong> {{ scoring_stats.median_score }}
+            </p>
+            
+            <div class="table-container">
+                <table class="ranking-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 50px;">Rank</th>
+                            <th>Team #</th>
+                            <th>Scores</th>
+                            <th>Raw Sum</th>
+                            <th>Normalized Weight</th>
+                            <th>Final Score</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for team in score_preview %}
+                        <tr>
+                            <td class="rank-{{ loop.index }}" style="font-weight: 700;">{{ loop.index }}</td>
+                            <td><strong>{{ team.team_number }}</strong></td>
+                            <td>{{ team.task_count }}</td>
+                            <td>{{ team.raw_sum }}</td>
+                            <td>
+                                {% if team.normalized_score is not none %}
+                                    {% set weight = (team.raw_sum - scoring_stats.min_team_score) / (scoring_stats.max_team_score - scoring_stats.min_team_score) if scoring_stats.max_team_score != scoring_stats.min_team_score else 1.0 %}
+                                    {{ "%.3f"|format(weight) }}
+                                {% else %}
+                                    <span style="color: var(--text-secondary);">-</span>
+                                {% endif %}
+                            </td>
+                            <td style="font-weight: 700; color: var(--text-primary);">
+                                {{ team.final_score }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            
+            <div style="margin-top: 15px; padding: 15px; background-color: var(--hover-bg); border-radius: 6px; border-left: 4px solid var(--primary-blue); font-size: 0.85rem;">
+                <strong>Rating Scale Reference:</strong>
+                <ul style="margin: 8px 0 0 20px; color: var(--text-secondary);">
+                    {% for rating, label in orange_ratings.items() %}
+                    <li>
+                        {% if rating == 5 %}⭐
+                        {% elif rating == 4 %}🌟
+                        {% elif rating == 3 %}✓
+                        {% elif rating == 2 %}⚠️
+                        {% else %}❌{% endif %}
+                        <strong>{{ rating }}</strong>: {{ label }}
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% else %}
+            <div class="empty-state" style="padding: 40px;">
+                <p style="color: var(--text-secondary);">No orange scores found yet.</p>
+                <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                    Scores are stored in the Score table with category='orange'.
+                    Add scores manually or via API to see calculations.
+                </p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Import / Export JSON Modal (Combined) -->
+<div id="importExportModal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 650px;">
+        <div class="modal-header">
+            <h3>Import / Export Scoring Configuration</h3>
+            <span class="close-modal" onclick="closeImportExportModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <p style="color: var(--text-secondary); margin-bottom: 15px; font-size: 0.9rem;">
+                Copy the JSON below to export, or paste new JSON to import. 
+                The text area updates live with the current configuration.
+            </p>
+
+            <div style="margin-bottom: 15px;">
+                <label style="font-weight: 600; display: block; margin-bottom: 5px;">
+                    Configuration JSON
+                </label>
+                <textarea id="importExportJson" rows="10"
+                          style="width: 100%; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; font-family: monospace; font-size: 0.85rem; resize: vertical;"
+                          placeholder="Loading..."></textarea>
+            </div>
+
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button type="button" class="refresh-btn" onclick="copyConfigToClipboard()">
+                    📋 Copy to Clipboard
+                </button>
+                <button type="button" class="login-btn" onclick="importConfigFromTextarea()">
+                    ⬆️ Import from Textarea
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Template Modal -->
+<div id="addModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Add New Task Template</h3>
+            <span class="close-modal" onclick="closeAddModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <form action="{{ url_for('orange_config.add_template') }}" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                    <div>
+                        <label style="font-weight: 600; display: block; margin-bottom: 5px;">Task Type *</label>
+                        <input type="text" name="task_type" required
+                               placeholder="e.g., Customer Support, Business Task"
+                               style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                    </div>
+                    <div>
+                        <label style="font-weight: 600; display: block; margin-bottom: 5px;">Template Name *</label>
+                        <input type="text" name="name" required
+                               placeholder="e.g., Reset User Password"
+                               style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                    </div>
+                </div>
+
+                <div style="margin-bottom: 15px;">
+                    <label style="font-weight: 600; display: block; margin-bottom: 5px;">Scenario Prompt *</label>
+                    <textarea name="scenario_prompt" required rows="4"
+                              placeholder="Describe the task scenario for orange team members..."
+                              style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;"></textarea>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                    <div>
+                        <label style="font-weight: 600; display: block; margin-bottom: 5px;">Points Possible</label>
+                        <input type="number" name="points_possible" value="0" min="0"
+                               style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                        <small style="color: var(--text-secondary);">Optional reference points</small>
+                    </div>
+                    <div>
+                        <label style="font-weight: 600; display: block; margin-bottom: 5px;">Outcome Guidelines</label>
+                        <input type="text" name="outcome_guidelines"
+                               placeholder="What defines success?"
+                               style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+                    <button type="button" class="refresh-btn" onclick="closeAddModal()">Cancel</button>
+                    <button type="submit" class="login-btn">Create Template</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Template Modal -->
+<div id="editModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Edit Task Template</h3>
+            <span class="close-modal" onclick="closeEditModal()">&times;</span>
+        </div>
+        <div class="modal-body" id="editModalBody">
+            <div style="text-align: center; padding: 20px;">Loading...</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- Add Template Modal ---
+    function openAddModal() {
+        document.getElementById('addModal').style.display = 'flex';
+    }
+
+    function closeAddModal() {
+        document.getElementById('addModal').style.display = 'none';
+    }
+
+    // --- Edit Template Modal ---
+    function openEditModal(templateId) {
+        const modal = document.getElementById('editModal');
+        const body = document.getElementById('editModalBody');
+        
+        modal.style.display = 'flex';
+        body.innerHTML = '<div style="text-align: center; padding: 20px;">Loading...</div>';
+        
+        fetch(`/orangeConfig/template/${templateId}/edit-form`)
+            .then(response => response.text())
+            .then(html => {
+                body.innerHTML = html;
+            })
+            .catch(error => {
+                body.innerHTML = '<div style="color: #dc3545;">Error loading template</div>';
+            });
+    }
+
+    function closeEditModal() {
+        document.getElementById('editModal').style.display = 'none';
+    }
+
+    // --- Import / Export Modal ---
+    async function openImportExportModal() {
+        const modal = document.getElementById('importExportModal');
+        const textarea = document.getElementById('importExportJson');
+        
+        modal.style.display = 'flex';
+        textarea.value = 'Loading current configuration...';
+        
+        try {
+            const response = await fetch('/orangeConfig/scoring/import-export');
+            if (!response.ok) throw new Error('Failed to fetch configuration');
+            
+            const config = await response.json();
+            textarea.value = JSON.stringify(config, null, 2);
+        } catch (error) {
+            textarea.value = `// Error loading configuration: ${error.message}`;
+        }
+    }
+
+    function closeImportExportModal() {
+        document.getElementById('importExportModal').style.display = 'none';
+    }
+
+    function copyConfigToClipboard() {
+        const textarea = document.getElementById('importExportJson');
+        textarea.select();
+        textarea.setSelectionRange(0, 99999);
+        
+        try {
+            navigator.clipboard.writeText(textarea.value).then(() => {
+                const btn = event.target.closest('button');
+                const originalText = btn.innerHTML;
+                btn.innerHTML = '✅ Copied!';
+                setTimeout(() => { btn.innerHTML = originalText; }, 1500);
+            }).catch(() => {
+                document.execCommand('copy');
+            });
+        } catch (err) {
+            alert('Unable to copy. Please select the text manually and copy.');
+        }
+    }
+
+    async function importConfigFromTextarea() {
+        const textarea = document.getElementById('importExportJson');
+        let jsonData;
+        
+        try {
+            jsonData = JSON.parse(textarea.value);
+        } catch (e) {
+            alert('Invalid JSON format. Please check your input and try again.');
+            return;
+        }
+        
+        try {
+            const csrfToken = document.querySelector('[name=csrf_token]')?.value || '';
+            
+            const response = await fetch('/orangeConfig/scoring/import-export', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify(jsonData)
+            });
+            
+            if (response.redirected) {
+                closeImportExportModal();
+                window.location.reload();
+            } else if (response.ok) {
+                closeImportExportModal();
+                window.location.reload();
+            } else {
+                const data = await response.json();
+                alert(`Import failed: ${data.error || 'Unknown error'}`);
+            }
+        } catch (error) {
+            alert(`Import failed: ${error.message}`);
+        }
+    }
+
+    // --- Template Actions ---
+    function toggleTemplate(templateId) {
+        if (!confirm('Toggle this template\'s active status?')) return;
+        
+        fetch(`/orangeConfig/template/${templateId}/toggle`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRFToken': document.querySelector('[name=csrf_token]')?.value || ''
+            }
+        }).then(() => location.reload());
+    }
+
+    function deleteTemplate(templateId) {
+        if (!confirm('Are you sure you want to delete this template? This cannot be undone.')) return;
+        
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = `/orangeConfig/template/${templateId}/delete`;
+        
+        const csrfInput = document.createElement('input');
+        csrfInput.type = 'hidden';
+        csrfInput.name = 'csrf_token';
+        csrfInput.value = document.querySelector('[name=csrf_token]')?.value || '';
+        form.appendChild(csrfInput);
+        
+        document.body.appendChild(form);
+        form.submit();
+    }
+
+    // --- Close modals if clicking outside ---
+    window.onclick = function(event) {
+        const modals = ['addModal', 'editModal', 'importExportModal'];
+        modals.forEach(id => {
+            if (event.target == document.getElementById(id)) {
+                document.getElementById(id).style.display = 'none';
+            }
+        });
+    }
+</script>
+
+<style>
+    .inactive-row {
+        opacity: 0.6;
+        background-color: rgba(0, 0, 0, 0.03);
+    }
+    
+        /* Status badges */
+    .status-badge {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        background-color: var(--hover-bg);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
+    }
+
+    .status-badge.success {
+        background-color: rgba(40, 167, 69, 0.15);
+        color: #28a745;
+        border-color: #28a745;
+    }
+
+    .status-badge.warning {
+        background-color: rgba(255, 193, 7, 0.15);
+        color: #856404;
+        border-color: #ffc107;
+    }
+
+    [data-theme="dark"] .status-badge.warning {
+        color: #ffc107;
+    }
+
+
+</style>
+{% endblock %}

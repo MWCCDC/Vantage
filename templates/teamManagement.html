@@ -1,0 +1,391 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard-container">
+    <!-- Page Header -->
+    <div class="page-header">
+        <h1>Team Management</h1>
+        <p class="subtitle">Manage competition teams and their information</p>
+    </div>
+
+    <!-- Existing Teams Section -->
+    <div class="ranking-section">
+        <div class="section-header">
+            <h2>Existing Teams</h2>
+        </div>
+
+        {% if teams %}
+        <form method="POST" action="{{ url_for('team_management.team_management_update') }}" id="existingTeamsForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="form_type" value="update_existing">
+
+            <div class="table-container">
+                <table class="ranking-table" id="existingTeamsTable">
+                    <thead>
+                        <tr>
+                            <th>Team #</th>
+                            <th>Team Name</th>
+                            <th>School Name</th>
+                            <th>Active</th>
+                            <th style="width: 50px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for team in teams %}
+                        <tr class="team-row" data-team-id="{{ team.id }}">
+                            <td>
+                                <input type="hidden" name="existing_id[]" value="{{ team.id }}">
+                                <span style="font-weight: 600;">{{ team.team_number }}</span>
+                                {% if team_emails.get(team.id) %}
+                                    <span title="Contact emails configured" style="cursor: default;">📧</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <input type="text"
+                                       name="existing_team_name[]"
+                                       value="{{ team.team_name }}"
+                                       required
+                                       maxlength="100"
+                                       style="width: 100%; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px;">
+                            </td>
+                            <td>
+                                <input type="text"
+                                       name="existing_school_name[]"
+                                       value="{{ team.school_name or '' }}"
+                                       maxlength="200"
+                                       style="width: 100%; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px;">
+                            </td>
+                            <td style="text-align: center;">
+                                <input type="checkbox"
+                                       name="existing_is_active_{{ team.id }}"
+                                       value="on"
+                                       {% if team.is_active %}checked{% endif %}
+                                       style="transform: scale(1.3); cursor: pointer;">
+                            </td>
+                            <td style="text-align: center; cursor: pointer;" onclick="toggleMetadataRow('{{ team.id }}')">
+                                <span class="expand-arrow" id="arrow-{{ team.id }}">▶</span>
+                            </td>
+                        </tr>
+                        <tr class="metadata-row" id="metadata-{{ team.id }}" style="display: none;">
+                            <td colspan="5" style="padding: 0;text-align: left;">
+                                <div class="metadata-content">
+                                    <div class="metadata-header">
+                                        <strong>Metadata &amp; Contact Emails</strong>
+                                        <span class="metadata-status {% if team.team_metadata %}has-data{% else %}no-data{% endif %}">
+                                            {% if team.team_metadata %}
+                                                {{ team.team_metadata|length }} field(s)
+                                            {% else %}
+                                                No metadata
+                                            {% endif %}
+                                        </span>
+                                    </div>
+
+                                    <!-- Editable Contact Emails -->
+                                    <div class="emails-editor">
+                                        <label for="emails-{{ team.id }}" style="font-weight: 600; display: block; margin-bottom: 5px;">
+                                            Contact Emails
+                                        </label>
+                                        <input type="text"
+                                               id="emails-{{ team.id }}"
+                                               class="emails-input"
+                                               name="existing_emails[]"
+                                               value="{{ team_emails.get(team.id, '') }}"
+                                               placeholder="coach@school.edu, advisor@school.edu"
+                                               maxlength="500"
+                                               oninput="emailHint(this)"
+                                               style="width: 100%; max-width: 600px; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px;">
+                                        <small class="emails-hint" style="color: var(--text-secondary); display: block; margin-top: 4px;"></small>
+                                        <small style="color: var(--text-secondary); display: block; margin-top: 4px;">
+                                            Comma-separated recipient addresses. Used when bulk-emailing teams their external account credentials.
+                                        </small>
+                                    </div>
+
+                                    {% if team.team_metadata %}
+                                    <details style="margin-top: 12px;">
+                                        <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.85rem;">
+                                            Raw metadata JSON (reflects last saved state)
+                                        </summary>
+                                        <pre class="metadata-json">{{ team.team_metadata|tojson(indent=2) }}</pre>
+                                    </details>
+                                    {% else %}
+                                    <p class="metadata-empty">No other metadata available for this team.</p>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <div style="margin-top: 20px;">
+                <button type="submit" class="login-btn" style="padding: 12px 32px; font-size: 1rem;">
+                    💾 Save Changes
+                </button>
+                <span style="color: var(--text-secondary); font-size: 0.85rem; margin-left: 10px;">
+                    Email edits in expanded rows are included in this save.
+                </span>
+            </div>
+        </form>
+        {% else %}
+        <div style="padding: 30px; text-align: center; color: var(--text-secondary);">
+            No teams currently in the database. Add teams below to get started.
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Add New Teams Section -->
+    <div class="ranking-section" style="margin-top: 30px;">
+        <div class="section-header">
+            <h2>Add New Teams</h2>
+        </div>
+
+        <form method="POST" action="{{ url_for('team_management.team_management_update') }}" id="newTeamsForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="form_type" value="add_new">
+
+            <div class="table-container">
+                <table class="ranking-table" id="newTeamsTable">
+                    <thead>
+                        <tr>
+                            <th>Team #</th>
+                            <th>Team Name</th>
+                            <th>School Name</th>
+                            <th>Contact Emails</th>
+                            <th>Active</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr class="new-team-row">
+                            <td>
+                                <input type="number"
+                                       name="new_team_number[]"
+                                       placeholder="Team #"
+                                       min="1"
+                                       style="width: 80px; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px;">
+                            </td>
+                            <td>
+                                <input type="text"
+                                       name="new_team_name[]"
+                                       placeholder="Team Name"
+                                       maxlength="100"
+                                       style="width: 100%; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px;">
+                            </td>
+                            <td>
+                                <input type="text"
+                                       name="new_school_name[]"
+                                       placeholder="School Name"
+                                       maxlength="200"
+                                       style="width: 100%; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px;">
+                            </td>
+                            <td>
+                                <input type="text"
+                                       name="new_emails[]"
+                                       placeholder="coach@school.edu, advisor@school.edu"
+                                       maxlength="500"
+                                       oninput="emailHint(this)"
+                                       style="width: 100%; min-width: 220px; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px;">
+                                <small class="emails-hint" style="color: var(--text-secondary); display: block; margin-top: 2px;"></small>
+                            </td>
+                            <td style="text-align: center;">
+                                <input type="checkbox"
+                                       name="new_is_active_0"
+                                       value="on"
+                                       checked
+                                       style="transform: scale(1.3); cursor: pointer;">
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div style="margin-top: 20px; display: flex; gap: 10px; align-items: center;">
+                <button type="submit" class="login-btn" style="padding: 12px 32px; font-size: 1rem;">
+                    ➕ Add Teams
+                </button>
+
+                <button type="button"
+                        onclick="addNewTeamRow()"
+                        class="refresh-btn"
+                        style="display: flex; align-items: center; gap: 6px;">
+                    <span style="font-size: 1.2rem;">+</span> Add Row
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    let newRowCounter = 1;
+
+    function addNewTeamRow() {
+        const tableBody = document.querySelector('#newTeamsTable tbody');
+        const counter = newRowCounter++;
+        const newRow = document.createElement('tr');
+        newRow.className = 'new-team-row';
+        newRow.innerHTML = `
+            <td>
+                <input type="number"
+                       name="new_team_number[]"
+                       placeholder="Team #"
+                       min="1"
+                       style="width: 80px; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px;">
+            </td>
+            <td>
+                <input type="text"
+                       name="new_team_name[]"
+                       placeholder="Team Name"
+                       maxlength="100"
+                       style="width: 100%; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px;">
+            </td>
+            <td>
+                <input type="text"
+                       name="new_school_name[]"
+                       placeholder="School Name"
+                       maxlength="200"
+                       style="width: 100%; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px;">
+            </td>
+            <td>
+                <input type="text"
+                       name="new_emails[]"
+                       placeholder="coach@school.edu, advisor@school.edu"
+                       maxlength="500"
+                       oninput="emailHint(this)"
+                       style="width: 100%; min-width: 220px; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px;">
+                <small class="emails-hint" style="color: var(--text-secondary); display: block; margin-top: 2px;"></small>
+            </td>
+            <td style="text-align: center;">
+                <input type="checkbox"
+                       name="new_is_active_${counter}"
+                       value="on"
+                       checked
+                       style="transform: scale(1.3); cursor: pointer;">
+            </td>
+        `;
+        tableBody.appendChild(newRow);
+    }
+
+    // --- Live recipient count hint ---
+    function emailHint(input) {
+        const hint = input.parentElement.querySelector('.emails-hint');
+        if (!hint) return;
+        const raw = input.value.trim();
+        if (!raw) {
+            hint.textContent = '';
+            return;
+        }
+        const last = parts[parts.length - 1];
+        hint.textContent = parts.length > 1
+            ? `${parts.length} recipients (last: "${last}")`
+            : `1 recipient: "${last}"`;
+    }
+
+    // --- Metadata Row Toggle ---
+    function toggleMetadataRow(teamId) {
+        const metadataRow = document.getElementById(`metadata-${teamId}`);
+        const arrow = document.getElementById(`arrow-${teamId}`);
+        const isVisible = metadataRow.style.display !== 'none';
+
+        if (isVisible) {
+            metadataRow.style.display = 'none';
+            arrow.textContent = '▶';
+            arrow.parentElement.parentElement.classList.remove('expanded');
+        } else {
+            metadataRow.style.display = 'table-row';
+            arrow.textContent = '▼';
+            arrow.parentElement.parentElement.classList.add('expanded');
+        }
+    }
+</script>
+
+<style>
+    /* Metadata Row Styles */
+    .metadata-row {
+        background-color: var(--hover-bg);
+        border-top: 1px solid var(--border-color);
+    }
+
+    .metadata-content {
+        padding: 15px 20px;
+    }
+
+    .metadata-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+        font-size: 0.9rem;
+        color: var(--text-secondary);
+    }
+
+    .metadata-status {
+        font-size: 0.8rem;
+        padding: 4px 8px;
+        border-radius: 4px;
+        background-color: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+    }
+
+    .metadata-status.has-data {
+        color: var(--primary-green);
+        border-color: var(--primary-green);
+    }
+
+    .metadata-status.no-data {
+        color: var(--text-secondary);
+    }
+
+    .metadata-json {
+        background-color: var(--bg-secondary);
+        padding: 15px;
+        border-radius: 6px;
+        border: 1px solid var(--border-color);
+        overflow-x: auto;
+        font-size: 0.85rem;
+        line-height: 1.5;
+        max-height: 300px;
+        overflow-y: auto;
+        margin: 10px 0 0 0;
+    }
+
+    .metadata-empty {
+        color: var(--text-secondary);
+        font-style: italic;
+        margin: 10px 0 0 0;
+        padding: 10px 0;
+    }
+
+    /* Emails Editor */
+    .emails-editor {
+        padding: 12px 15px;
+        background-color: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+    }
+
+    .emails-hint:empty {
+        display: none;
+    }
+
+    /* Expand Arrow */
+    .expand-arrow {
+        display: inline-block;
+        transition: transform 0.2s ease;
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+    }
+
+    .team-row.expanded .expand-arrow {
+        color: var(--primary-blue);
+    }
+
+    /* Hover effect on team rows */
+    .team-row:hover {
+        background-color: var(--hover-bg);
+    }
+
+    .team-row.expanded {
+        background-color: var(--hover-bg);
+    }
+</style>
+{% endblock %}

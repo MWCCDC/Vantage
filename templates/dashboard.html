@@ -1,0 +1,424 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard-container">
+    <!-- Page Header -->
+    <div class="page-header">
+        <h1>Competition Dashboard</h1>
+        <p class="subtitle">Competition status and team rankings</p>
+    </div>
+
+    <!-- Statistics Grid -->
+    <div class="stats-grid">
+        <!-- Last Quotient Sync -->
+        <div class="stat-card">
+            <div class="stat-icon">🔄</div>
+            <div class="stat-content">
+                <h3>Last Quotient Sync</h3>
+                {% if quotient_status %}
+                    <p class="stat-value" id="quotient-sync-time" data-utc="{{ quotient_status.synced_at }}">
+                        Loading...
+                    </p>
+                    <p class="stat-subtitle">
+                        {% if quotient_celery_status and quotient_celery_status.enabled %}
+                        T: ✅ / 
+                            {% if sync_scores_enabled %}
+                            S: ✅ / 
+                            {% else %}
+                            S: ❌ /
+                            {% endif %}
+                        {% else %}
+                        T: ❌ / 
+                        {% endif %}
+                        Engine: 
+                        {% if quotient_status.running %}
+                            <span class="status-ok">Running</span>
+                        {% else %}
+                            <span class="status-warning">Paused</span>
+                        {% endif %}
+                    </p>
+                {% else %}
+                    <p class="stat-value">N/A</p>
+                    <p class="stat-subtitle">Status: <span class="status-error">No Data</span></p>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- Injects Graded -->
+        <div class="stat-card">
+            <div class="stat-icon">📝</div>
+            <div class="stat-content">
+                <h3>Injects Graded</h3>
+                <p class="stat-value">1,247</p>
+                {% if 'admin' in user_roles or 'white' in user_roles %}
+                <p class="stat-subtitle">Total: 1,850 (67%)</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Last Mantis Sync -->
+        <div class="stat-card">
+            <div class="stat-icon">🔄</div>
+            <div class="stat-content">
+                <h3>Last Mantis Sync</h3>
+                <p class="stat-value">2026-04-07 14:30:08 UTC</p>
+            </div>
+        </div>
+
+        <!-- Support Tickets -->
+        <div class="stat-card">
+            <div class="stat-icon">💻</div>
+            <div class="stat-content">
+                <h3>Support Tickets</h3>
+                <p class="stat-value">89</p>
+                {% if 'admin' in user_roles or 'green' in user_roles %}
+                <p class="stat-subtitle">Open: 12 | Closed: 77</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    {% if 'admin' in user_roles %}
+    <!-- Team Rankings Overall Table -->
+    <div class="ranking-section">
+        <div class="section-header">
+            <h2>Team Rankings Overall</h2>
+            <button class="refresh-btn" onclick="location.reload()">
+                <span>↻</span> Refresh
+            </button>
+        </div>
+
+        <!-- Overall Statistics Bar -->
+        {% if overall_stats.count > 0 %}
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 20px;">
+            <div style="background: var(--hover-bg); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); text-align: center;">
+                <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 5px;">Min Score</div>
+                <div style="font-size: 1.5rem; font-weight: 700; color: var(--text-primary);">{{ overall_stats.min|commaformat }}</div>
+            </div>
+            <div style="background: var(--hover-bg); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); text-align: center;">
+                <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 5px;">Max Score</div>
+                <div style="font-size: 1.5rem; font-weight: 700; color: var(--primary-primary);">{{ overall_stats.max|commaformat }}</div>
+            </div>
+            <div style="background: var(--hover-bg); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); text-align: center;">
+                <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 5px;">Average</div>
+                <div style="font-size: 1.5rem; font-weight: 700; color: var(--primary-primary);">{{ "%.0f"|format(overall_stats.avg)|commaformat }}</div>
+            </div>
+            <div style="background: var(--hover-bg); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); text-align: center;">
+                <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 5px;">Median</div>
+                <div style="font-size: 1.5rem; font-weight: 700; color: var(--primary-primary);">{{ "%.0f"|format(overall_stats.median)|commaformat }}</div>
+            </div>
+        </div>
+        {% else %}
+        <div style="padding: 15px; background: var(--hover-bg); border-radius: 8px; border: 1px solid var(--border-color); text-align: center; color: var(--text-secondary); margin-bottom: 20px;">
+            No team data available to calculate statistics.
+        </div>
+        {% endif %}
+        
+        <div class="table-container">
+            <table class="ranking-table">
+                <thead>
+                    <tr>
+                        <th>Rank</th>
+                        <th>Team</th>
+                        <th>School</th>
+                        <th>Services</th>
+                        <th>Red</th>
+                        <th>White</th>
+                        <th>Orange</th>
+                        <th>Green</th>
+                        <th>Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for team in teams_data %}
+                    <tr>
+                        <td class="rank-{{ team.rank }}">{{ team.rank }}</td>
+                        <td class="team-name">Team {{ team.team_number }}</td>
+                        <td class="org-name">{{ team.school_name }}</td>
+                        <td class="score-service">{{ team.blue|commaformat }}</td>
+                        <td class="score-red">
+                            {{ team.red|commaformat }}
+                            {% if team.red_normalized %}
+                            <span class="normalized-indicator" title="Normalized score based on Red Team configuration">🧮</span>
+                            {% endif %}
+                        </td>
+                        <td class="score-white">{{ team.white|commaformat }}</td>
+                        <td class="score-orange">
+                            {{ team.orange|commaformat }}
+                            {% if team.orange_normalized %}
+                            <span class="normalized-indicator" title="Normalized score based on Orange Team configuration">🧮</span>
+                            {% endif %}
+                        </td>
+                        <td class="score-green">{{ team.green|commaformat }}</td>
+                        <td class="score-total">{{ team.total|commaformat }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="9" style="text-align: center; padding: 20px; color: var(--text-secondary);">
+                            No team data available.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Team Rankings Services Table -->
+    <div class="ranking-section">
+        <div class="section-header">
+            <h2>Team Rankings for Services</h2>
+        </div>
+        
+        <div class="table-container">
+            <table class="ranking-table">
+                <colgroup>
+                    <col style="width: 10%;">
+                    <col style="width: 80%;">
+                    <col style="width: 10%;">
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th>Rank</th>
+                        <th>Team</th>
+                        <th>Services</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% set services_sorted = teams_data|sort(attribute='blue', reverse=True) %}
+                    {% for team in services_sorted %}
+                    <tr>
+                        <td class="rank-{{ loop.index }}">{{ loop.index }}</td>
+                        <td class="team-name">Team {{ team.team_number }}</td>
+                        <td class="score-service">{{ team.blue|commaformat }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="3" style="text-align: center; padding: 20px; color: var(--text-secondary);">
+                            No data available.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    {% if 'admin' in user_roles or 'green' in user_roles %}
+    <!-- Team Rankings Green Table -->
+    <div class="ranking-section">
+        <div class="section-header">
+            <h2>Team Rankings for Green Scores</h2>
+        </div>
+        
+        <div class="table-container">
+            <table class="ranking-table">
+                <colgroup>
+                    <col style="width: 10%;">
+                    <col style="width: 80%;">
+                    <col style="width: 10%;">
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th>Rank</th>
+                        <th>Team</th>
+                        <th>Green</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% set green_sorted = teams_data|sort(attribute='green', reverse=True) %}
+                    {% for team in green_sorted %}
+                    <tr>
+                        <td class="rank-{{ loop.index }}">{{ loop.index }}</td>
+                        <td class="team-name">Team {{ team.team_number }}</td>
+                        <td class="score-green">{{ team.green|commaformat }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="3" style="text-align: center; padding: 20px; color: var(--text-secondary);">
+                            No data available.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if 'admin' in user_roles or 'orange' in user_roles %}
+    <!-- Team Rankings Orange Table -->
+    <div class="ranking-section">
+        <div class="section-header">
+            <h2>Team Rankings for Orange Scores</h2>
+            <button class="refresh-btn" onclick="location.reload()">
+                <span>↻</span> Refresh
+            </button>
+        </div>
+        
+        <div class="table-container">
+            <table class="ranking-table">
+                <colgroup>
+                    <col style="width: 10%;">
+                    <col style="width: 80%;">
+                    <col style="width: 10%;">
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th>Rank</th>
+                        <th>Team</th>
+                        <th>Orange</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% set orange_sorted = teams_data|sort(attribute='orange', reverse=True) %}
+                    {% for team in orange_sorted %}
+                    <tr>
+                        <td class="rank-{{ loop.index }}">{{ loop.index }}</td>
+                        <td class="team-name">Team {{ team.team_number }}</td>
+                        <td class="score-orange">
+                            {{ team.orange|commaformat }}
+                            {% if team.orange_normalized %}
+                            <span class="normalized-indicator" title="Normalized score based on Orange Team configuration">🧮</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="3" style="text-align: center; padding: 20px; color: var(--text-secondary);">
+                            No data available.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if 'admin' in user_roles or 'red' in user_roles %}
+    <!-- Team Rankings Red Table -->
+    <div class="ranking-section">
+        <div class="section-header">
+            <h2>Team Rankings for Red Scores</h2>
+            <button class="refresh-btn" onclick="location.reload()">
+                <span>↻</span> Refresh
+            </button>
+        </div>
+        
+        <div class="table-container">
+            <table class="ranking-table">
+                <colgroup>
+                    <col style="width: 10%;">
+                    <col style="width: 80%;">
+                    <col style="width: 10%;">
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th>Rank</th>
+                        <th>Team</th>
+                        <th>Red</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% set red_sorted = teams_data|sort(attribute='red', reverse=True) %}
+                    {% for team in red_sorted %}
+                    <tr>
+                        <td class="rank-{{ loop.index }}">{{ loop.index }}</td>
+                        <td class="team-name">Team {{ team.team_number }}</td>
+                        <td class="score-red">
+                            {{ team.red|commaformat }}
+                            {% if team.red_normalized %}
+                            <span class="normalized-indicator" title="Normalized score based on Red Team configuration">🧮</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="3" style="text-align: center; padding: 20px; color: var(--text-secondary);">
+                            No data available.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if 'admin' in user_roles or 'white' in user_roles %}
+    <!-- Team Rankings White Table -->
+    <div class="ranking-section">
+        <div class="section-header">
+            <h2>Team Rankings for White Scores</h2>
+        </div>
+        
+        <div class="table-container">
+            <table class="ranking-table">
+                <colgroup>
+                    <col style="width: 10%;">
+                    <col style="width: 80%;">
+                    <col style="width: 10%;">
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th>Rank</th>
+                        <th>Team</th>
+                        <th>White</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% set white_sorted = teams_data|sort(attribute='white', reverse=True) %}
+                    {% for team in white_sorted %}
+                    <tr>
+                        <td class="rank-{{ loop.index }}">{{ loop.index }}</td>
+                        <td class="team-name">Team {{ team.team_number }}</td>
+                        <td class="score-white">{{ team.white|commaformat }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="3" style="text-align: center; padding: 20px; color: var(--text-secondary);">
+                            No data available.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+    // --- Local Time Conversion for Quotient Sync ---
+    const syncTimeCell = document.getElementById('quotient-sync-time');
+    if (syncTimeCell) {
+        const utcString = syncTimeCell.getAttribute('data-utc');
+        if (utcString) {
+            let isoString = utcString;
+            if (!isoString.endsWith('Z') && !isoString.endsWith('+00:00')) {
+                isoString += 'Z';
+            }
+
+            const date = new Date(isoString);
+            
+            if (isNaN(date.getTime())) {
+                syncTimeCell.textContent = "Invalid Date";
+            } else {
+                const options = { 
+                    year: 'numeric', 
+                    month: '2-digit', 
+                    day: '2-digit', 
+                    hour: '2-digit', 
+                    minute: '2-digit', 
+                    second: '2-digit',
+                    hour12: false,
+                    timeZoneName: 'short'
+                };
+                syncTimeCell.textContent = date.toLocaleString(undefined, options);
+            }
+        }
+    }
+</script>
+{% endblock %}

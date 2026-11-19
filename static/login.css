@@ -1,0 +1,213 @@
+/* --- Login Page Styles --- */
+/* Uses CSS variables from style.css */
+
+body {
+    margin: 0;
+    padding: 0;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    background-color: var(--bg-body);
+    transition: background-color var(--transition-speed);
+}
+
+/* Theme Toggle Button (Top Right) */
+.login-theme-toggle {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    background: var(--bg-content);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    transition: all 0.2s ease;
+    box-shadow: var(--shadow-sm);
+    z-index: 10;
+}
+
+.login-theme-toggle:hover {
+    background-color: var(--hover-bg);
+    transform: scale(1.05);
+    box-shadow: var(--shadow-md);
+}
+
+.login-theme-toggle:focus-visible {
+    outline: 2px solid var(--primary-blue);
+    outline-offset: 2px;
+}
+
+.login-wrapper {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.login-container {
+    display: flex;
+    width: 100%;
+    max-width: 800px;
+    /* Removed min-height to let content dictate size, ensuring perfect centering */
+    background-color: var(--bg-content);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    border: 1px solid var(--border-color);
+    overflow: hidden;
+    transition: background-color var(--transition-speed), border-color var(--transition-speed);
+}
+
+/* --- Left Side (Logo) --- */
+.login-left {
+    flex: 1;
+    background: linear-gradient(135deg, #e9ecef 0%, #dee2e6 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+    transition: background var(--transition-speed);
+}
+
+/* Dark mode grey variant */
+[data-theme="dark"] .login-left {
+    background: linear-gradient(135deg, #495057 0%, #343a40 100%);
+}
+
+.login-logo {
+    width: 180px;
+    height: 180px;
+    object-fit: contain;
+    filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.2));
+}
+
+/* --- Right Side (Content) --- */
+.login-right {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center; /* Vertically centers the group of items */
+    padding: 40px;
+    transition: background-color var(--transition-speed);
+    gap: 20px; /* Adds consistent spacing between children */
+}
+
+/* Competition Name Styling */
+.competition-name {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    text-align: center;
+    letter-spacing: -0.5px;
+    margin: 0; /* Reset default margins */
+}
+
+/* Spacer to ensure extra breathing room if gap isn't enough */
+.spacer {
+    flex-grow: 1; /* Pushes button down if space allows, or acts as buffer */
+    max-height: 40px; /* Limits the spacer size so it doesn't push button off screen */
+}
+
+.login-btn {
+    background-color: var(--primary-orange);
+    color: white;
+    border: none;
+    padding: 16px 64px;
+    font-size: 1.2rem;
+    font-weight: 600;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 12px rgba(253, 126, 20, 0.3);
+    margin-top: 10px; /* Additional small buffer */
+}
+
+.login-btn:hover {
+    background-color: #e86b0a;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(253, 126, 20, 0.4);
+}
+
+.login-btn:active {
+    transform: translateY(0);
+}
+
+.login-btn:focus-visible {
+    outline: 3px solid var(--primary-blue);
+    outline-offset: 2px;
+}
+
+.login-btn.loading {
+    opacity: 0.7;
+    cursor: wait;
+    pointer-events: none;
+}
+
+/* --- Responsive Design --- */
+@media (max-width: 768px) {
+    .login-container {
+        flex-direction: column;
+        max-width: 360px;
+        min-height: auto;
+    }
+
+    .login-left {
+        padding: 30px 20px;
+        min-height: 180px;
+    }
+
+    .login-logo {
+        width: 120px;
+        height: 120px;
+    }
+
+    .login-right {
+        padding: 30px 20px;
+        gap: 15px; /* Reduced gap slightly for mobile */
+    }
+
+    .competition-name {
+        font-size: 1.6rem;
+    }
+
+    .spacer {
+        max-height: 20px; /* Smaller spacer on mobile */
+    }
+
+    .login-btn {
+        padding: 14px 48px;
+        font-size: 1rem;
+    }
+    
+    .login-theme-toggle {
+        top: 15px;
+        right: 15px;
+        width: 40px;
+        height: 40px;
+        font-size: 1rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .login-container {
+        margin: 10px;
+    }
+
+    .login-logo {
+        width: 100px;
+        height: 100px;
+    }
+
+    .login-btn {
+        width: 100%;
+    }
+}

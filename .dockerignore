@@ -1,0 +1,37 @@
+# Never bake secrets or local state into the image
+.env
+.env.*
+
+# Git / CI
+.git
+.gitignore
+.gitattributes
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# Local databases / logs
+*.db
+*.log
+data/
+
+# Migrations are managed outside the image
+migrations/
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Documentation and compose files aren't needed at runtime
+docker-compose.yml
+Dockerfile
+.dockerignore
+README.md

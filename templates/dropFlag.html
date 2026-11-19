@@ -1,0 +1,605 @@
+{% extends "base.html" %}
+
+{% block title %}Drop Flag{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <!-- Page Header -->
+    <div class="page-header">
+        <h1>Drop Flag</h1>
+        <p class="subtitle">Schedule automated competition start and stop on Quotient engines</p>
+    </div>
+
+    <!-- Schedule Configuration Section -->
+    <div class="ranking-section">
+        <div class="section-header">
+            <h2>Schedule Configuration</h2>
+            <button class="refresh-btn" onclick="location.reload()">↻ Refresh</button>
+        </div>
+
+        <p style="color: var(--text-secondary); margin-bottom: 20px;">
+            Set the drop (start) and end times for the competition. Times are entered in your
+            <strong>local timezone</strong>, converted to UTC on save, and the equivalent times in other zones update as you type.
+        </p>
+
+        <div style="background: var(--hover-bg); padding: 20px; border-radius: 6px; border: 1px solid var(--border-color);">
+            <form id="dropFlagForm" action="{{ url_for('drop_flag.save_schedule') }}" method="POST" onsubmit="return submitSchedule(event);">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                <!-- UTC fields populated by JavaScript before submit -->
+                <input type="hidden" id="drop_time_utc" name="drop_time_utc" value="">
+                <input type="hidden" id="end_time_utc" name="end_time_utc" value="">
+                <input type="hidden" id="selected_engines" name="selected_engines" value="">
+
+                <!-- DROP TIME -->
+                <div style="margin-bottom: 30px;">
+                    <label for="drop_time" style="font-weight: 600; display: block; margin-bottom: 8px;">
+                        🏁 Drop Time (Competition Start) — Local Timezone
+                    </label>
+                    <input type="datetime-local" id="drop_time" name="drop_time" step="60"
+                           style="width: 100%; max-width: 350px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; font-size: 1rem;">
+
+                    <!-- Drop Time Zone Conversions -->
+                    <div id="dropTimeConversions" style="margin-top: 12px;">
+                        <table class="tz-conversion-table">
+                            <thead>
+                                <tr>
+                                    <th>Timezone</th>
+                                    <th>Converted Time</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>Pacific (America/Los_Angeles)</td>
+                                    <td id="drop_tz_pt" class="tz-converted">—</td>
+                                </tr>
+                                <tr>
+                                    <td>Mountain (America/Denver)</td>
+                                    <td id="drop_tz_mt" class="tz-converted">—</td>
+                                </tr>
+                                <tr>
+                                    <td>Central (America/Chicago)</td>
+                                    <td id="drop_tz_ct" class="tz-converted">—</td>
+                                </tr>
+                                <tr>
+                                    <td>Eastern (America/New_York)</td>
+                                    <td id="drop_tz_et" class="tz-converted">—</td>
+                                </tr>
+                                <tr>
+                                    <td>UTC</td>
+                                    <td id="drop_tz_utc" class="tz-converted">—</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <div id="drop_reset_note" class="tz-note" style="display: none;">
+                            🔄 Score reset will occur at
+                            <strong id="drop_reset_time">—</strong>
+                            (1 minute before drop)
+                        </div>
+                    </div>
+                </div>
+
+                <!-- END TIME -->
+                <div style="margin-bottom: 30px;">
+                    <label for="end_time" style="font-weight: 600; display: block; margin-bottom: 8px;">
+                        ⏹ End Time (Competition Stop) — Local Timezone
+                    </label>
+                    <input type="datetime-local" id="end_time" name="end_time" step="60"
+                           style="width: 100%; max-width: 350px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; font-size: 1rem;">
+
+                    <!-- End Time Zone Conversions -->
+                    <div id="endTimeConversions" style="margin-top: 12px;">
+                        <table class="tz-conversion-table">
+                            <thead>
+                                <tr>
+                                    <th>Timezone</th>
+                                    <th>Converted Time</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>Pacific (America/Los_Angeles)</td>
+                                    <td id="end_tz_pt" class="tz-converted">—</td>
+                                </tr>
+                                <tr>
+                                    <td>Mountain (America/Denver)</td>
+                                    <td id="end_tz_mt" class="tz-converted">—</td>
+                                </tr>
+                                <tr>
+                                    <td>Central (America/Chicago)</td>
+                                    <td id="end_tz_ct" class="tz-converted">—</td>
+                                </tr>
+                                <tr>
+                                    <td>Eastern (America/New_York)</td>
+                                    <td id="end_tz_et" class="tz-converted">—</td>
+                                </tr>
+                                <tr>
+                                    <td>UTC</td>
+                                    <td id="end_tz_utc" class="tz-converted">—</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Validation message -->
+                    <div id="timeValidationError" style="display: none; margin-top: 10px; padding: 10px 14px; border-radius: 4px; background-color: rgba(220, 53, 69, 0.1); border: 1px solid var(--danger-color); color: var(--danger-color); font-size: 0.9rem;">
+                        ⚠️ End time must be after the drop time.
+                    </div>
+                </div>
+
+                <!-- ENGINE SELECTION -->
+                <div style="margin-bottom: 30px; padding: 15px; border: 1px solid var(--border-color); border-radius: 6px; background-color: var(--bg-content);">
+                    <label style="font-weight: 600; display: block; margin-bottom: 8px;">
+                        ⚙️ Target Engines
+                    </label>
+                    <small style="color: var(--text-secondary); display: block; margin-bottom: 10px;">
+                        Select which Quotient engines this schedule applies to. Leave all unchecked to apply to <strong>all engines</strong>.
+                    </small>
+                    {% if engine_options %}
+                    <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+                        {% for eng in engine_options %}
+                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                            <input type="checkbox" class="engine-checkbox" value="{{ eng.id }}"
+                                   style="transform: scale(1.2); cursor: pointer;">
+                            <span>{{ eng.name }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <small style="color: var(--danger-color);">No engines configured. Add engines on the Quotient Configuration page.</small>
+                    {% endif %}
+                </div>
+
+                <!-- RESET OPTION -->
+                <div style="margin-bottom: 30px; padding: 15px; border: 1px solid var(--border-color); border-radius: 6px; background-color: var(--bg-content);">
+                    <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer;">
+                        <input type="checkbox" id="reset_engines" name="reset_engines"
+                               style="transform: scale(1.3); cursor: pointer; margin-top: 3px;">
+                        <span>
+                            <strong>Reset scoring engines before start</strong><br>
+                            <small style="color: var(--text-secondary);">
+                                If checked, the selected engines will be reset exactly 1 minute before the
+                                scheduled drop time. This clears all scores and round history on the engine.
+                            </small>
+                        </span>
+                    </label>
+                </div>
+
+                <!-- ENABLE OPTION -->
+                <div style="margin-bottom: 30px; padding: 15px; border: 1px solid var(--border-color); border-radius: 6px; background-color: var(--bg-content);">
+                    <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                        <input type="checkbox" id="schedule_enabled" name="schedule_enabled" checked
+                               style="transform: scale(1.3); cursor: pointer;">
+                        <span><strong>Enable schedule immediately on save</strong><br>
+                        <small style="color: var(--text-secondary);">Uncheck to save the schedule without activating it.</small></span>
+                    </label>
+                </div>
+
+                <!-- SUBMIT -->
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <button type="submit" class="login-btn" style="font-weight: 600;" id="saveScheduleBtn">
+                        💾 Save Schedule
+                    </button>
+                    <span style="color: var(--text-secondary); font-size: 0.85rem;">
+                        The schedule can be adjusted or disabled at any time.
+                    </span>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Active Schedule Display Section -->
+    <div class="ranking-section" style="margin-top: 30px;">
+        <div class="section-header">
+            <h2>Active Schedule</h2>
+        </div>
+
+        {% if schedule %}
+        <div class="table-container">
+            <table class="ranking-table">
+                <thead>
+                    <tr>
+                        <th>Action</th>
+                        <th>Scheduled Time (UTC)</th>
+                        <th>Time Remaining</th>
+                        <th>Engines</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>🏁 Competition Drop</td>
+                        <td>{{ schedule.drop_time_utc if schedule.drop_time_utc else 'Not scheduled' }}</td>
+                        <td class="countdown" data-utc="{{ schedule.drop_time_utc }}">—</td>
+                        {% if schedule.selected_engines %}
+                        <td>
+                            {% for eng in engine_options %}
+                                {% if eng.id in schedule.selected_engines %}{{ eng.name }}{% if not loop.last %}, {% endif %}{% endif %}
+                            {% endfor %}
+                        </td>
+                        {% else %}
+                        <td>All</td>
+                        {% endif %}
+                        <td>
+                            {% if schedule.reset_before_drop %}
+                                <span class="status-badge warning">Reset −1 min</span>
+                            {% endif %}
+                        </td>
+                        <td rowspan="2">
+                            {% if schedule.enabled %}
+                                <span class="status-badge success">Enabled</span><br>
+                            {% else %}
+                                <span class="status-badge warning">Disabled</span><br>
+                            {% endif %}
+                            <div style="display: flex; gap: 5px; margin-top: 8px; flex-wrap: wrap;">
+                                <button class="refresh-btn" onclick="adjustSchedule()" title="Adjust Time">✏️</button>
+                                <button class="refresh-btn" onclick="toggleSchedule()" title="Enable/Disable">{% if schedule.enabled %}🔴{% else %}🟢{% endif %}</button>
+                                <button class="delete-score-btn" onclick="cancelSchedule()" title="Cancel">🗑️</button>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>⏹ Competition End</td>
+                        <td>{{ schedule.end_time_utc if schedule.end_time_utc else 'Not scheduled' }}</td>
+                        <td class="countdown" data-utc="{{ schedule.end_time_utc }}">—</td>
+                        <td></td>
+                        <td></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state" style="padding: 40px;">
+            <p style="color: var(--text-secondary);">No schedule is currently configured.</p>
+            <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                Fill out the form above and save to schedule an automated drop.
+            </p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+    // --- Timezone conversion constants ---
+    const TIMEZONES = [
+        { suffix: 'pt', tz: 'America/Los_Angeles', label: 'Pacific' },
+        { suffix: 'mt', tz: 'America/Denver', label: 'Mountain' },
+        { suffix: 'ct', tz: 'America/Chicago', label: 'Central' },
+        { suffix: 'et', tz: 'America/New_York', label: 'Eastern' },
+        { suffix: 'utc', tz: 'UTC', label: 'UTC' }
+    ];
+
+    const FORMAT_OPTIONS = {
+        weekday: 'short',
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+        hour12: true,
+        timeZoneName: 'short'
+    };
+
+    /**
+     * Parse a datetime-local input value into a Date object.
+     * The value (e.g. "2026-04-11T14:30") is interpreted in the user's
+     * local timezone, which is the browser default for this format.
+     */
+    function parseLocalDateTime(inputValue) {
+        if (!inputValue) return null;
+        const d = new Date(inputValue);
+        return isNaN(d.getTime()) ? null : d;
+    }
+
+    /**
+     * Populate the hidden UTC fields from the local datetime inputs.
+     * toISOString() emits milliseconds ("...:00.000Z"); strip them so the
+     * backend's '%Y-%m-%dT%H:%M:%SZ' parser accepts the value.
+     */
+    function syncUtcFields() {
+        const dropDate = parseLocalDateTime(document.getElementById('drop_time').value);
+        const endDate = parseLocalDateTime(document.getElementById('end_time').value);
+
+        document.getElementById('drop_time_utc').value =
+            dropDate ? dropDate.toISOString().replace(/\.\d{3}Z$/, 'Z') : '';
+        document.getElementById('end_time_utc').value =
+            endDate ? endDate.toISOString().replace(/\.\d{3}Z$/, 'Z') : '';
+
+        const checkedEngines = Array.from(document.querySelectorAll('.engine-checkbox:checked'))
+            .map(cb => cb.value);
+        document.getElementById('selected_engines').value = checkedEngines.join(',');
+    }
+
+    /**
+     * Convert a stored UTC ISO string to a datetime-local input value
+     * (used to pre-fill the form from the saved schedule).
+     */
+    function utcToLocalInput(isoUtc) {
+        if (!isoUtc) return '';
+        const d = new Date(isoUtc);
+        if (isNaN(d.getTime())) return '';
+        const pad = n => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+
+    /**
+     * Update all timezone conversion cells for a given prefix ("drop" or "end").
+     */
+    function updateTimezoneConversions(prefix) {
+        const input = document.getElementById(prefix + '_time');
+        const date = parseLocalDateTime(input.value);
+
+        for (const zone of TIMEZONES) {
+            const cell = document.getElementById(`${prefix}_tz_${zone.suffix}`);
+            if (!cell) continue;
+            if (!date) {
+                cell.textContent = '—';
+                continue;
+            }
+            try {
+                cell.textContent = date.toLocaleString(undefined, {
+                    ...FORMAT_OPTIONS,
+                    timeZone: zone.tz
+                });
+            } catch (e) {
+                cell.textContent = 'Error';
+            }
+        }
+
+        // Show the reset note under the drop time when the checkbox is ticked
+        if (prefix === 'drop') {
+            const resetCheckbox = document.getElementById('reset_engines');
+            const resetNote = document.getElementById('drop_reset_note');
+            const resetTimeEl = document.getElementById('drop_reset_time');
+            if (resetCheckbox && resetCheckbox.checked && date) {
+                const resetDate = new Date(date.getTime() - 60 * 1000);
+                resetTimeEl.textContent = resetDate.toLocaleString(undefined, FORMAT_OPTIONS) + ' (local)';
+                resetNote.style.display = 'block';
+            } else {
+                resetNote.style.display = 'none';
+            }
+        }
+    }
+
+    /**
+     * Validate that end time is strictly after drop time.
+     */
+    function validateTimes() {
+        const dropDate = parseLocalDateTime(document.getElementById('drop_time').value);
+        const endDate = parseLocalDateTime(document.getElementById('end_time').value);
+        const errDiv = document.getElementById('timeValidationError');
+
+        let valid = true;
+        if (dropDate && endDate) {
+            valid = endDate.getTime() > dropDate.getTime();
+        }
+
+        errDiv.style.display = valid ? 'none' : 'block';
+        return valid;
+    }
+
+    function handleTimeChange() {
+        updateTimezoneConversions('drop');
+        updateTimezoneConversions('end');
+        validateTimes();
+    }
+
+    /**
+     * Format a Date as a datetime-local value string in local time.
+     */
+    function toLocalISOString(date) {
+        const pad = n => String(n).padStart(2, '0');
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+
+    // --- CSRF Token Helper ---
+    function getCSRFToken() {
+        return document.querySelector('[name=csrf_token]')?.value ||
+               document.querySelector('meta[name="csrf-token"]')?.content || '';
+    }
+
+    /**
+     * Form submission — validation gate, then sync UTC fields and submit.
+     */
+    function submitSchedule(event) {
+        event.preventDefault();
+
+        const dropDate = parseLocalDateTime(document.getElementById('drop_time').value);
+        const endDate = parseLocalDateTime(document.getElementById('end_time').value);
+
+        if (!dropDate) {
+            alert('Please set a drop time.');
+            return false;
+        }
+        if (!endDate) {
+            alert('Please set an end time.');
+            return false;
+        }
+        if (!validateTimes()) {
+            alert('The end time must be after the drop time.');
+            return false;
+        }
+
+        syncUtcFields();
+        event.target.submit();
+        return true;
+    }
+
+    // --- Active Schedule actions ---
+    async function adjustSchedule() {
+        const dropDate = parseLocalDateTime(document.getElementById('drop_time').value);
+        const endDate = parseLocalDateTime(document.getElementById('end_time').value);
+
+        if (!dropDate || !endDate) {
+            alert('Both drop and end times must be set to adjust the schedule.');
+            return;
+        }
+        if (!validateTimes()) {
+            alert('The end time must be after the drop time.');
+            return;
+        }
+
+        syncUtcFields();
+
+        const formData = new FormData(document.getElementById('dropFlagForm'));
+
+        try {
+            const response = await fetch("{{ url_for('drop_flag.adjust_schedule') }}", {
+                method: 'POST',
+                headers: { 'X-CSRFToken': getCSRFToken() },
+                body: formData
+            });
+
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            location.reload();
+        } catch (error) {
+            alert(`Failed to adjust schedule: ${error.message}`);
+        }
+    }
+
+    async function toggleSchedule() {
+        const newEnabled = {% if schedule and schedule.enabled %}false{% else %}true{% endif %};
+
+        const formData = new FormData();
+        formData.append('enabled', newEnabled ? 'true' : 'false');
+
+        try {
+            const response = await fetch("{{ url_for('drop_flag.toggle_schedule') }}", {
+                method: 'POST',
+                headers: { 'X-CSRFToken': getCSRFToken() },
+                body: formData
+            });
+
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            location.reload();
+        } catch (error) {
+            alert(`Failed to toggle schedule: ${error.message}`);
+        }
+    }
+
+    async function cancelSchedule() {
+        if (!confirm('Cancel the scheduled drop entirely? All pending tasks will be cleared.')) return;
+
+        try {
+            const response = await fetch("{{ url_for('drop_flag.cancel_schedule') }}", {
+                method: 'POST',
+                headers: { 'X-CSRFToken': getCSRFToken() }
+            });
+
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            location.reload();
+        } catch (error) {
+            alert(`Failed to cancel schedule: ${error.message}`);
+        }
+    }
+
+    // --- Countdown timer for the Active Schedule table ---
+    function updateCountdowns() {
+        document.querySelectorAll('.countdown').forEach(el => {
+            const utc = el.getAttribute('data-utc');
+            if (!utc || utc === 'None' || utc === '') {
+                el.textContent = '—';
+                return;
+            }
+            const target = new Date(utc);
+            if (isNaN(target.getTime())) {
+                el.textContent = '—';
+                return;
+            }
+            const diff = target.getTime() - Date.now();
+            if (diff <= 0) {
+                el.textContent = 'Passed';
+                el.style.color = 'var(--text-secondary)';
+                return;
+            }
+            const hours = Math.floor(diff / 3600000);
+            const minutes = Math.floor((diff % 3600000) / 60000);
+            const seconds = Math.floor((diff % 60000) / 1000);
+            el.textContent = `${hours}h ${minutes}m ${seconds}s`;
+        });
+    }
+
+    // --- Initialize on page load ---
+    document.addEventListener('DOMContentLoaded', function() {
+        document.getElementById('drop_time').addEventListener('input', handleTimeChange);
+        document.getElementById('drop_time').addEventListener('change', handleTimeChange);
+        document.getElementById('end_time').addEventListener('input', handleTimeChange);
+        document.getElementById('end_time').addEventListener('change', handleTimeChange);
+        document.getElementById('reset_engines').addEventListener('change', () => updateTimezoneConversions('drop'));
+
+        // Pre-fill form from the saved schedule (if any)
+        {% if schedule %}
+        document.getElementById('drop_time').value = utcToLocalInput('{{ schedule.drop_time_utc }}');
+        document.getElementById('end_time').value = utcToLocalInput('{{ schedule.end_time_utc }}');
+        {% if schedule.reset_before_drop %}document.getElementById('reset_engines').checked = true;{% endif %}
+        {% if not schedule.enabled %}document.getElementById('schedule_enabled').checked = false;{% endif %}
+        {% if schedule.selected_engines %}
+        const selectedIds = {{ schedule.selected_engines }};
+        document.querySelectorAll('.engine-checkbox').forEach(cb => {
+            if (selectedIds.includes(parseInt(cb.value))) cb.checked = true;
+        });
+        {% endif %}
+        {% endif %}
+
+        // Initial render
+        handleTimeChange();
+        updateCountdowns();
+        setInterval(updateCountdowns, 1000);
+    });
+</script>
+
+<style>
+    /* Timezone conversion table */
+    .tz-conversion-table {
+        width: 100%;
+        max-width: 550px;
+        border-collapse: collapse;
+        font-size: 0.85rem;
+    }
+
+    .tz-conversion-table th,
+    .tz-conversion-table td {
+        padding: 6px 10px;
+        border: 1px solid var(--border-color);
+        text-align: left;
+    }
+
+    .tz-conversion-table th {
+        background-color: var(--hover-bg);
+        font-weight: 600;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        font-size: 0.7rem;
+        letter-spacing: 0.5px;
+    }
+
+    .tz-conversion-table td:first-child {
+        color: var(--text-secondary);
+        white-space: nowrap;
+    }
+
+    .tz-converted {
+        font-family: monospace;
+        font-variant-numeric: tabular-nums;
+        color: var(--text-primary);
+    }
+
+    .tz-note {
+        margin-top: 10px;
+        padding: 8px 12px;
+        border-radius: 4px;
+        background-color: rgba(255, 193, 7, 0.1);
+        border: 1px solid #ffc107;
+        color: var(--text-primary);
+        font-size: 0.85rem;
+    }
+
+    [data-theme="dark"] .tz-note {
+        color: #ffc107;
+    }
+
+    .countdown {
+        font-family: monospace;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+</style>
+{% endblock %}

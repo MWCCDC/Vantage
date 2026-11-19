@@ -1,0 +1,1092 @@
+{% extends "base.html" %}
+
+{% block title %}Quotient Configuration{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <!-- Page Header -->
+    <div class="page-header">
+        <h1>Quotient Configuration</h1>
+        <p class="subtitle">Manage multiple scoring engines and monitor status</p>
+    </div>
+
+    {% if error %}
+    <!-- Error State -->
+    <div class="ranking-section" style="border-color: var(--danger-color); background-color: rgba(220, 53, 69, 0.05);">
+        <div style="display: flex; align-items: center; gap: 15px; padding: 10px;">
+            <span style="font-size: 2rem;">⚠️</span>
+            <div>
+                <h3 style="margin: 0 0 5px 0; color: var(--danger-color);">Quotient Sync Issue</h3>
+                <p style="margin: 0; color: var(--text-secondary);">{{ error }}</p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Engine Management Section -->
+    <div class="ranking-section" style="margin-top: 20px;">
+        <div class="section-header">
+            <h2>Engine Management</h2>
+            <div style="display: flex; gap: 10px;">
+                <button class="refresh-btn" onclick="openAddEngineModal()">➕ Add Engine</button>
+                <button class="refresh-btn" onclick="location.reload()">↻ Refresh</button>
+            </div>
+        </div>
+
+        {% if engines %}
+        <div class="table-container">
+            <table class="ranking-table">
+                <thead>
+                    <tr>
+                        <th>Engine</th>
+                        <th>Scoring Engine</th>
+                        <th>Competition</th>
+                        <th>Last Sync</th>
+                        <th>Last Result</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for eng in engine_statuses %}
+                    <tr>
+                        <td>
+                            <strong>{{ eng.name }}</strong>
+                            <br><small class="text-muted">{{ eng.domain }}</small>
+                        </td>
+                        <td>
+                            {% if eng.eng_status.running %}
+                                <span class="status-badge success">Running</span>
+                            {% else %}
+                                <span class="status-badge warning">Paused</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if eng.eng_status.competition_started %}
+                                <span class="status-badge success">Started</span>
+                            {% else %}
+                                <span class="status-badge warning">Not Started</span>
+                            {% endif %}
+                        </td>
+                        <td id="sync-time-{{ eng.id }}">
+                            {% if eng.status.last_run_at %}
+                                <span class="timestamp-cell" data-utc="{{ eng.status.last_run_at }}">Loading...</span>
+                            {% else %}
+                                <span style="color: var(--text-secondary);">Never</span>
+                            {% endif %}
+                        </td>
+                        <td id="sync-result-{{ eng.id }}">
+                            {% if eng.status.last_run_success is not none %}
+                                {% if eng.status.last_run_success %}
+                                    <span class="status-badge success">✓ Success</span>
+                                {% else %}
+                                    <span class="status-badge warning" title="{{ eng.status.last_run_error }}">✗ Failed</span>
+                                {% endif %}
+                            {% else %}
+                                <span style="color: var(--text-secondary);">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div style="display: flex; gap: 5px; flex-wrap: wrap;">
+                                <button class="refresh-btn" onclick="toggleEngine({{ eng.id }}, 'start')" title="Start Engine">▶</button>
+                                <button class="refresh-btn" onclick="toggleEngine({{ eng.id }}, 'stop')" title="Stop Engine">⏸</button>
+                                <button class="refresh-btn" onclick="toggleCompetition({{ eng.id }}, 'start')" title="Start Competition">🏁</button>
+                                <button class="refresh-btn" onclick="toggleCompetition({{ eng.id }}, 'stop')" title="Stop Competition">⏹</button>
+                                <button class="delete-score-btn" onclick="resetEngine({{ eng.id }})" title="Reset Engine">🔄</button>
+                                <button class="metadata-btn" onclick="editEngine({{ eng.id }})" title="Edit">✏️</button>
+                                <button class="delete-score-btn" onclick="deleteEngine({{ eng.id }})" title="Delete">🗑️</button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Global Control Buttons -->
+        <div style="margin-top: 20px; padding: 15px; background: var(--hover-bg); border-radius: 6px; border: 1px solid var(--border-color);">
+            <h4 style="margin: 0 0 10px 0;">Global Controls</h4>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <button class="login-btn" onclick="globalAction('start-all-engines')">▶ Start All Engines</button>
+                <button class="refresh-btn" onclick="globalAction('stop-all-engines')">⏸ Stop All Engines</button>
+                <button class="login-btn" onclick="globalAction('start-all-competitions')">🏁 Start All Competitions</button>
+                <button class="refresh-btn" onclick="globalAction('stop-all-competitions')">⏹ Stop All Competitions</button>
+                <button class="refresh-btn" onclick="globalAction('reset-all-engines')">🔄 Reset All Engines</button>
+            </div>
+        </div>
+        {% else %}
+        <div class="empty-state" style="padding: 40px;">
+            <p style="color: var(--text-secondary);">No engines configured.</p>
+            <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                Click "Add Engine" to configure a Quotient scoring engine.
+            </p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Celery Task Configuration Section -->
+    <div class="ranking-section" style="margin-top: 30px;">
+        <div class="section-header">
+            <h2>Automated Sync Configuration</h2>
+        </div>
+        
+        <p style="color: var(--text-secondary); margin-bottom: 20px;">
+            Configure the automated sync task for all engines. When enabled, Celery Beat will periodically sync data from all active engines.
+        </p>
+
+        <div style="background: var(--hover-bg); padding: 20px; border-radius: 6px; border: 1px solid var(--border-color);">
+            <form action="{{ url_for('quotient.configure_celery_task') }}" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+                    <div>
+                        <label style="font-weight: 600; display: block; margin-bottom: 8px;">Task Status</label>
+                        <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+                            <input type="checkbox" name="task_enabled" 
+                                {% if celery_config and celery_config.enabled %}checked{% endif %}
+                                style="transform: scale(1.3); cursor: pointer;">
+                            <span>Enable Automated Sync</span>
+                        </label>
+                        <small style="color: var(--text-secondary); display: block;">
+                            {% if celery_config and celery_config.enabled %}
+                                ✅ Task is currently <strong>enabled</strong>
+                            {% elif celery_config %}
+                                ❌ Task is currently <strong>disabled</strong>
+                            {% else %}
+                                ⏳ Loading task status...
+                            {% endif %}
+                        </small>
+                    </div>
+
+                    <div>
+                        <label for="schedule_seconds" style="font-weight: 600; display: block; margin-bottom: 8px;">
+                            Sync Interval (Seconds)
+                        </label>
+                        <input type="number" id="schedule_seconds" name="schedule_seconds" 
+                            value="{{ celery_config.schedule_seconds if celery_config else 300 }}"
+                            min="30" max="3600"
+                            style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                        <small style="color: var(--text-secondary); display: block; margin-top: 6px;">
+                            Range: 30s - 3600s (1 hour)<br>
+                            <strong>Current: {{ (celery_config.schedule_seconds // 60)|default(5) }} minute(s)</strong>
+                        </small>
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 10px; align-items: center; margin-top: 10px;">
+                    <button type="submit" class="login-btn" style="font-weight: 600;">
+                        💾 Save Configuration
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {% if quotient_data and not error %}
+    <!-- Legacy Single-Engine View (Only shown if data exists) -->
+    <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 30px 0;">
+
+    <div class="ranking-section">
+        <div class="section-header">
+            <h2>Competition Status (Primary Engine)</h2>
+        </div>
+        
+        <div class="stats-grid">
+            <!-- Last Sync -->
+            <div class="stat-card">
+                <div class="stat-icon">🔄</div>
+                <div class="stat-content">
+                    <h3>Last Sync</h3>
+                    <p class="stat-value" id="sync-time" data-utc="{{ quotient_data.synced_at }}">Loading...</p>
+                </div>
+            </div>
+
+            <!-- Engine Status -->
+            <div class="stat-card">
+                <div class="stat-icon">⚙️</div>
+                <div class="stat-content">
+                    <h3>Scoring Engine</h3>
+                    {% if quotient_data.engine.running %}
+                        <p class="stat-value" style="color: var(--primary-green);">Running</p>
+                        <p class="stat-subtitle">Engine is active</p>
+                    {% else %}
+                        <p class="stat-value" style="color: var(--danger-color);">Stopped</p>
+                        <p class="stat-subtitle">Engine is paused</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Competition Status -->
+            <div class="stat-card">
+                <div class="stat-icon">🏆</div>
+                <div class="stat-content">
+                    <h3>Competition</h3>
+                    {% if quotient_data.engine.competition_started %}
+                        <p class="stat-value" style="color: var(--primary-green);">Live</p>
+                        <p class="stat-subtitle">Competition has started</p>
+                    {% else %}
+                        <p class="stat-value" style="color: var(--text-secondary);">Not Started</p>
+                        <p class="stat-subtitle">Awaiting kickoff</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Last Round -->
+            <div class="stat-card">
+                <div class="stat-icon">🔢</div>
+                <div class="stat-content">
+                    <h3>Last Round</h3>
+                    {% if quotient_data.last_round_id %}
+                        <p class="stat-value">#{{ quotient_data.last_round_id }}</p>
+                        <p class="stat-subtitle" id="round-time" data-utc="{{ quotient_data.last_round_time }}">Loading...</p>
+                    {% else %}
+                        <p class="stat-value">N/A</p>
+                        <p class="stat-subtitle">No rounds recorded</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Team Scores Table (Primary Engine Only) -->
+        <div class="ranking-section">
+            <div class="section-header">
+                <h2>Team Scores (Primary Engine)</h2>
+                <div style="display: flex; gap: 10px;">
+                    <button class="refresh-btn" onclick="location.reload()">↻ Refresh</button>
+                    <button class="refresh-btn" onclick="openImportModal()">⚠️ Import Teams</button>
+                </div>
+            </div>
+
+            {% if quotient_data.has_scores_data %}
+            <p style="color: var(--text-secondary); margin-bottom: 15px; font-size: 0.9rem;">
+                Scores from Primary Quotient engine. Click a team row to see per-service breakdown.
+            </p>
+            {% elif quotient_data.has_teams_api_data %}
+            <p style="color: var(--text-secondary); margin-bottom: 15px; font-size: 0.9rem;">
+                Limited data — scores computed from last round checks only.
+            </p>
+            {% endif %}
+
+            <div class="table-container">
+                <table class="ranking-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 40px;"></th>
+                            <th>Rank</th>
+                            <th>Team</th>
+                            <th>Gross Points</th>
+                            <th>SLA Violations</th>
+                            <th>SLA Penalty</th>
+                            <th>Total Points</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for team in quotient_data.teams_table %}
+                        <tr class="team-summary-row" onclick="toggleServiceBreakdown('svc-{{ team.team_id }}')" style="cursor: pointer;">
+                            <td>
+                                {% if team.services %}
+                                <span class="expand-arrow" id="arrow-svc-{{ team.team_id }}">▶</span>
+                                {% endif %}
+                            </td>
+                            <td class="rank-{{ loop.index }}">{{ loop.index }}</td>
+                            <td class="team-name">Team {{ team.team_id }} — {{ team.team_name }}</td>
+                            <td>{{ team.gross_points|commaformat }}</td>
+                            <td>{{ team.sla_violations }}</td>
+                            <td style="color: var(--danger-color);">{{ team.sla_penalty|commaformat }}</td>
+                            <td class="score-total"><strong>{{ team.total_points|commaformat }}</strong></td>
+                        </tr>
+
+                        {% if team.services %}
+                        <tr class="service-breakdown" id="svc-{{ team.team_id }}" style="display: none;">
+                            <td colspan="7" style="padding: 0;">
+                                <div style="padding: 10px 20px 15px 50px; background-color: var(--hover-bg);">
+                                    <table class="ranking-table" style="font-size: 0.9rem;">
+                                        <thead>
+                                            <tr>
+                                                <th>Service</th>
+                                                <th>Points</th>
+                                                <th>SLA Violations</th>
+                                                <th>SLA Penalty</th>
+                                                <th>Net</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for svc in team.services %}
+                                            <tr>
+                                                <td>{{ svc.service_name }}</td>
+                                                <td>{{ svc.service_points|commaformat }}</td>
+                                                <td>{{ svc.sla_violations }}</td>
+                                                <td style="color: var(--danger-color);">-{{ svc.sla_penalty|commaformat }}</td>
+                                                <td><strong>{{ (svc.service_points - svc.sla_penalty)|commaformat }}</strong></td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endif %}
+
+                        {% else %}
+                        <tr>
+                            <td colspan="7" style="text-align: center; padding: 20px; color: var(--text-secondary);">
+                                No team data available.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+</div>
+
+<!-- Add Engine Modal -->
+<div id="addEngineModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Add New Quotient Engine</h3>
+            <span class="close-modal" onclick="closeAddEngineModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <form id="addEngineForm" onsubmit="return false;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                    <div>
+                        <label style="font-weight: 600; display: block; margin-bottom: 5px;">Engine Name *</label>
+                        <input type="text" id="engineName" required placeholder="e.g., Primary, Failover-1"
+                               style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                    </div>
+                    <div>
+                        <label style="font-weight: 600; display: block; margin-bottom: 5px;">Protocol *</label>
+                        <select id="engineProtocol" required style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                            <option value="https">HTTPS</option>
+                            <option value="http">HTTP</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div style="margin-bottom: 15px;">
+                    <label style="font-weight: 600; display: block; margin-bottom: 5px;">Domain/IP *</label>
+                    <input type="text" id="engineDomain" required placeholder="e.g., quotient.example.com"
+                           style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                    <div>
+                        <label style="font-weight: 600; display: block; margin-bottom: 5px;">Username *</label>
+                        <input type="text" id="engineUser" required placeholder="admin"
+                               style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                    </div>
+                    <div>
+                        <label style="font-weight: 600; display: block; margin-bottom: 5px;">Password *</label>
+                        <input type="password" id="enginePass" required placeholder="••••••••"
+                               style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+                    <button type="button" class="refresh-btn" onclick="closeAddEngineModal()">Cancel</button>
+                    <button type="button" class="refresh-btn" onclick="testEngineConnection()">Test Connection</button>
+                    <button type="button" class="login-btn" onclick="saveEngine()">Add Engine</button>
+                </div>
+            </form>
+            <div id="connectionTestResult" style="margin-top: 15px; padding: 10px; border-radius: 4px; display: none;"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Engine Modal -->
+<div id="editEngineModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Edit Quotient Engine</h3>
+            <span class="close-modal" onclick="closeEditEngineModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <form id="editEngineForm" onsubmit="return false;">
+                <input type="hidden" id="editEngineId">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                    <div>
+                        <label style="font-weight: 600; display: block; margin-bottom: 5px;">Engine Name *</label>
+                        <input type="text" id="editEngineName" required
+                               style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                    </div>
+                    <div>
+                        <label style="font-weight: 600; display: block; margin-bottom: 5px;">Protocol *</label>
+                        <select id="editEngineProtocol" required style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                            <option value="https">HTTPS</option>
+                            <option value="http">HTTP</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div style="margin-bottom: 15px;">
+                    <label style="font-weight: 600; display: block; margin-bottom: 5px;">Domain/IP *</label>
+                    <input type="text" id="editEngineDomain" required
+                           style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                    <div>
+                        <label style="font-weight: 600; display: block; margin-bottom: 5px;">Username *</label>
+                        <input type="text" id="editEngineUser" required
+                               style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                    </div>
+                    <div>
+                        <label style="font-weight: 600; display: block; margin-bottom: 5px;">Password <small>(Leave blank to keep current)</small></label>
+                        <input type="password" id="editEnginePass" placeholder="••••••••"
+                               style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+                    <button type="button" class="refresh-btn" onclick="closeEditEngineModal()">Cancel</button>
+                    <button type="button" class="login-btn" onclick="updateEngine()">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Import Confirmation Modal -->
+<div id="importModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header" style="background-color: rgba(220, 53, 69, 0.1); border-bottom-color: var(--danger-color);">
+            <h3 style="color: var(--danger-color);">⚠️ Warning: Overwrite All Team Data</h3>
+            <span class="close-modal" onclick="closeImportModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <p><strong>This action cannot be undone.</strong></p>
+            <p>Proceeding will:</p>
+            <ul style="margin: 15px 0; padding-left: 20px; color: var(--text-secondary);">
+                <li>Delete <strong>ALL</strong> existing teams from the database.</li>
+                <li>Delete all associated <strong>Scores</strong> and <strong>External Accounts</strong>.</li>
+                <li>Create new teams using data from the Primary Quotient engine.</li>
+                <li>Set <strong>School Name</strong> to blank for all imported teams.</li>
+            </ul>
+            <p>Are you absolutely sure you want to proceed?</p>
+            
+            <form action="{{ url_for('quotient.import_quotient_teams') }}" method="POST" style="margin-top: 20px;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="confirm_import" value="yes">
+                
+                <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                    <button type="button" class="refresh-btn" onclick="closeImportModal()">Cancel</button>
+                    <button type="submit" class="refresh-btn">
+                        Yes, Overwrite Everything
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- Local Time Conversion ---
+    document.querySelectorAll('[data-utc]').forEach(el => {
+        const utcString = el.getAttribute('data-utc');
+        if (utcString && utcString !== 'Unknown') {
+            let isoString = utcString;
+            if (!isoString.endsWith('Z') && !isoString.endsWith('+00:00')) isoString += 'Z';
+
+            if (isoString.startsWith('0001')) {
+                el.textContent = 'N/A';
+                return;
+            }
+
+            const date = new Date(isoString);
+            if (isNaN(date.getTime())) {
+                el.textContent = 'Invalid Date';
+            } else {
+                const options = {
+                    year: 'numeric', month: '2-digit', day: '2-digit',
+                    hour: '2-digit', minute: '2-digit', second: '2-digit',
+                    hour12: false, timeZoneName: 'short'
+                };
+                el.textContent = date.toLocaleString(undefined, options);
+            }
+        } else {
+            el.textContent = 'N/A';
+        }
+    });
+
+    // --- Service Breakdown Toggle ---
+    function toggleServiceBreakdown(id) {
+        const row = document.getElementById(id);
+        const arrow = document.getElementById('arrow-' + id);
+        if (!row) return;
+
+        const isVisible = row.style.display !== 'none';
+
+        if (isVisible) {
+            row.style.display = 'none';
+            if (arrow) arrow.textContent = '▶';
+        } else {
+            row.style.display = '';
+            if (arrow) arrow.textContent = '▼';
+        }
+    }
+
+    // --- Import Modal ---
+    function openImportModal() {
+        document.getElementById('importModal').style.display = 'flex';
+    }
+
+    function closeImportModal() {
+        document.getElementById('importModal').style.display = 'none';
+    }
+
+    // --- Add Engine Modal ---
+    function openAddEngineModal() {
+        document.getElementById('addEngineModal').style.display = 'flex';
+        document.getElementById('connectionTestResult').style.display = 'none';
+    }
+
+    function closeAddEngineModal() {
+        document.getElementById('addEngineModal').style.display = 'none';
+        document.getElementById('addEngineForm').reset();
+    }
+
+    // --- Edit Engine Modal ---
+    function closeEditEngineModal() {
+        document.getElementById('editEngineModal').style.display = 'none';
+        document.getElementById('editEngineForm').reset();
+    }
+
+    // --- Close modals if clicking outside ---
+    window.onclick = function(event) {
+        const modals = ['addEngineModal', 'editEngineModal', 'importModal'];
+        modals.forEach(id => {
+            if (event.target == document.getElementById(id)) {
+                document.getElementById(id).style.display = 'none';
+            }
+        });
+    }
+
+    // --- CSRF Token Helper ---
+    function getCSRFToken() {
+        return document.querySelector('[name=csrf_token]')?.value ||
+               document.querySelector('meta[name="csrf-token"]')?.content || '';
+    }
+
+    // --- Test Engine Connection ---
+    async function testEngineConnection() {
+        const btn = event.target;
+        const resultDiv = document.getElementById('connectionTestResult');
+        const originalText = btn.innerHTML;
+
+        btn.innerHTML = '⏳ Testing...';
+        btn.disabled = true;
+        resultDiv.style.display = 'none';
+
+        const data = {
+            protocol: document.getElementById('engineProtocol').value,
+            domain: document.getElementById('engineDomain').value,
+            user: document.getElementById('engineUser').value,
+            password: document.getElementById('enginePass').value
+        };
+
+        try {
+            const response = await fetch('/quotient/engines/test', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCSRFToken()
+                },
+                body: JSON.stringify(data)
+            });
+
+            const result = await response.json();
+
+            resultDiv.style.display = 'block';
+            if (result.success) {
+                resultDiv.style.backgroundColor = 'rgba(40, 167, 69, 0.1)';
+                resultDiv.style.color = '#28a745';
+                resultDiv.style.border = '1px solid #28a745';
+                resultDiv.innerHTML = `✅ ${result.message}`;
+            } else {
+                resultDiv.style.backgroundColor = 'rgba(220, 53, 69, 0.1)';
+                resultDiv.style.color = '#dc3545';
+                resultDiv.style.border = '1px solid #dc3545';
+                resultDiv.innerHTML = `❌ ${result.message}`;
+            }
+        } catch (error) {
+            resultDiv.style.display = 'block';
+            resultDiv.style.backgroundColor = 'rgba(220, 53, 69, 0.1)';
+            resultDiv.style.color = '#dc3545';
+            resultDiv.innerHTML = `❌ Error: ${error.message}`;
+        } finally {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }
+    }
+
+    // --- Save New Engine ---
+    async function saveEngine() {
+        const data = {
+            name: document.getElementById('engineName').value,
+            protocol: document.getElementById('engineProtocol').value,
+            domain: document.getElementById('engineDomain').value,
+            user: document.getElementById('engineUser').value,
+            password: document.getElementById('enginePass').value
+        };
+
+        if (!data.name || !data.domain || !data.user || !data.password) {
+            alert('Please fill in all required fields.');
+            return;
+        }
+
+        try {
+            const response = await fetch('/quotient/engines', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCSRFToken()
+                },
+                body: JSON.stringify(data)
+            });
+
+            if (response.ok) {
+                closeAddEngineModal();
+                location.reload();
+            } else {
+                const result = await response.json();
+                alert('Failed to add engine: ' + (result.error || 'Unknown error'));
+            }
+        } catch (error) {
+            alert('Failed to add engine: ' + error.message);
+        }
+    }
+
+    // --- Edit Engine ---
+    async function editEngine(engineId) {
+        try {
+            const response = await fetch('/quotient/engines', {
+                method: 'GET',
+                headers: { 'X-CSRFToken': getCSRFToken() }
+            });
+
+            if (!response.ok) throw new Error('Failed to fetch engines');
+
+            const engines = await response.json();
+            const engine = engines.find(e => e.id === engineId);
+
+            if (!engine) {
+                alert('Engine not found.');
+                return;
+            }
+
+            document.getElementById('editEngineId').value = engine.id;
+            document.getElementById('editEngineName').value = engine.name;
+            document.getElementById('editEngineProtocol').value = engine.protocol;
+            document.getElementById('editEngineDomain').value = engine.domain;
+            document.getElementById('editEngineUser').value = engine.user;
+            document.getElementById('editEnginePass').value = ''; // Never pre-fill password
+
+            document.getElementById('editEngineModal').style.display = 'flex';
+        } catch (error) {
+            alert('Failed to load engine details: ' + error.message);
+        }
+    }
+
+    async function updateEngine() {
+        const engineId = document.getElementById('editEngineId').value;
+        const data = {
+            name: document.getElementById('editEngineName').value,
+            protocol: document.getElementById('editEngineProtocol').value,
+            domain: document.getElementById('editEngineDomain').value,
+            user: document.getElementById('editEngineUser').value
+        };
+
+        const password = document.getElementById('editEnginePass').value;
+        if (password) {
+            data.password = password;
+        }
+
+        if (!data.name || !data.domain || !data.user) {
+            alert('Please fill in all required fields.');
+            return;
+        }
+
+        try {
+            const response = await fetch(`/quotient/engines/${engineId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCSRFToken()
+                },
+                body: JSON.stringify(data)
+            });
+
+            if (response.ok) {
+                closeEditEngineModal();
+                location.reload();
+            } else {
+                const result = await response.json();
+                alert('Failed to update engine: ' + (result.error || 'Unknown error'));
+            }
+        } catch (error) {
+            alert('Failed to update engine: ' + error.message);
+        }
+    }
+
+    // --- Delete Engine ---
+    async function deleteEngine(engineId) {
+        if (!confirm('Are you sure you want to delete this engine? This will also remove all associated blue scores and cached data.')) return;
+
+        try {
+            const response = await fetch(`/quotient/engines/${engineId}`, {
+                method: 'DELETE',
+                headers: { 'X-CSRFToken': getCSRFToken() }
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                alert(`Engine deleted. Removed ${result.deleted_scores} associated score(s).`);
+                location.reload();
+            } else {
+                const result = await response.json();
+                alert('Failed to delete engine: ' + (result.error || 'Unknown error'));
+            }
+        } catch (error) {
+            alert('Failed to delete engine: ' + error.message);
+        }
+    }
+
+    // --- Engine Control (Start/Stop) ---
+    async function toggleEngine(engineId, action) {
+        const endpoint = action === 'start'
+            ? `/quotient/control/start-engine/${engineId}`
+            : `/quotient/control/stop-engine/${engineId}`;
+
+        const label = action === 'start' ? 'start' : 'stop';
+
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': getCSRFToken() }
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                alert(`Engine ${label} command sent. Task ID: ${result.task_id}`);
+            } else {
+                alert(`Failed to ${label} engine.`);
+            }
+        } catch (error) {
+            alert(`Failed to ${label} engine: ${error.message}`);
+        }
+    }
+
+    // --- Competition Control (Start/Stop) ---
+    async function toggleCompetition(engineId, action) {
+        const endpoint = action === 'start'
+            ? `/quotient/control/start-competition/${engineId}`
+            : `/quotient/control/stop-competition/${engineId}`;
+
+        const label = action === 'start' ? 'start' : 'stop';
+
+        if (!confirm(`Are you sure you want to ${label} the competition on this engine?`)) return;
+
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': getCSRFToken() }
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                alert(`Competition ${label} command sent. Task ID: ${result.task_id}`);
+            } else {
+                alert(`Failed to ${label} competition.`);
+            }
+        } catch (error) {
+            alert(`Failed to ${label} competition: ${error.message}`);
+        }
+    }
+
+    // --- Global Control Actions ---
+    async function globalAction(action) {
+        const labels = {
+            'start-all-engines': 'start all engines',
+            'stop-all-engines': 'stop all engines',
+            'start-all-competitions': 'start all competitions',
+            'stop-all-competitions': 'stop all competitions',
+            'reset-all-engines': 'RESET ALL ENGINES'
+        };  
+
+        const label = labels[action];
+        if (!confirm(`Are you sure you want to ${label}?`)) return;
+
+        try {
+            const response = await fetch(`/quotient/control/${action}`, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': getCSRFToken() }
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                alert(`${label} command sent. Task ID: ${result.task_id}`);
+            } else {
+                alert(`Failed to ${label}.`);
+            }
+        } catch (error) {
+            alert(`Failed to ${label}: ${error.message}`);
+        }
+    }
+
+    // --- Celery Task Status Refresh ---
+    async function refreshTaskStatus() {
+        try {
+            const response = await fetch('/quotient/celery-task/status');
+            const data = await response.json();
+
+            document.getElementById('last-run-time').textContent = data.last_run_at || 'Never';
+
+            const statusEl = document.getElementById('last-run-status');
+            const errorEl = document.getElementById('last-run-error');
+
+            if (data.last_run_success === true) {
+                statusEl.innerHTML = '<span style="color: var(--primary-green);">✓ Success</span>';
+                errorEl.style.display = 'none';
+            } else if (data.last_run_success === false) {
+                statusEl.innerHTML = '<span style="color: var(--danger-color);">✗ Failed</span>';
+                if (data.last_run_error) {
+                    errorEl.textContent = 'Error: ' + data.last_run_error;
+                    errorEl.style.display = 'block';
+                }
+            } else {
+                statusEl.textContent = 'Never run';
+                errorEl.style.display = 'none';
+            }
+        } catch (error) {
+            console.error('Failed to refresh task status:', error);
+        }
+    }
+
+    // --- Refresh status on page load ---
+    document.addEventListener('DOMContentLoaded', function() {
+        refreshTaskStatus();
+    });
+
+    // --- Engine Reset ---
+    async function resetEngine(engineId) {
+        if (!confirmReset()) return;
+
+        try {
+            const response = await fetch(`/quotient/control/reset-engine/${engineId}`, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': getCSRFToken() }
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                alert(`Reset command sent for engine. Task ID: ${result.task_id}`);
+            } else {
+                alert('Failed to reset engine.');
+            }
+        } catch (error) {
+            alert(`Failed to reset engine: ${error.message}`);
+        }
+    }
+
+    // --- Destructive action confirmation (type-to-confirm) ---
+    function confirmReset() {
+        const phrase = 'RESET';
+        return prompt(
+            `This will reset the engine, clearing its scores and round history.\n\n` +
+            `This action cannot be undone.\n\n` +
+            `Type ${phrase} to confirm:`
+        ) === phrase;
+    }
+</script>
+
+<style>
+    /* Team Summary Row */
+    .team-summary-row:hover {
+        background-color: var(--hover-bg);
+    }
+
+    .service-breakdown td {
+        border-bottom: 2px solid var(--border-color);
+    }
+
+    /* Status Badges */
+    .status-badge {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .status-badge.success {
+        background-color: rgba(40, 167, 69, 0.15);
+        color: #28a745;
+        border: 1px solid #28a745;
+    }
+
+    .status-badge.warning {
+        background-color: rgba(255, 193, 7, 0.15);
+        color: #856404;
+        border: 1px solid #ffc107;
+    }
+
+    [data-theme="dark"] .status-badge.warning {
+        color: #ffc107;
+    }
+
+    /* Primary Badge */
+    .badge.bg-primary {
+        background-color: var(--primary-blue);
+        color: #ffffff;
+        border-radius: 4px;
+        font-weight: 600;
+    }
+
+    /* Text Helpers */
+    .text-muted {
+        color: var(--text-secondary);
+        font-size: 0.85rem;
+    }
+
+    /* Modal Overlay */
+    .modal {
+        display: none;
+        position: fixed;
+        z-index: 10000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        overflow: auto;
+        background-color: rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(4px);
+        align-items: center;
+        justify-content: center;
+    }
+
+    .modal-content {
+        background-color: var(--bg-content);
+        margin: auto;
+        padding: 0;
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        width: 90%;
+        max-width: 600px;
+        max-height: 80vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        animation: modalSlideIn 0.3s ease-out;
+    }
+
+    @keyframes modalSlideIn {
+        from {
+            opacity: 0;
+            transform: translateY(-50px) scale(0.95);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+        }
+    }
+
+    .modal-header {
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background-color: var(--hover-bg);
+        border-radius: 12px 12px 0 0;
+    }
+
+    .modal-header h3 {
+        margin: 0;
+        font-size: 1.3rem;
+        color: var(--text-primary);
+        font-weight: 600;
+    }
+
+    .close-modal {
+        color: var(--text-secondary);
+        font-size: 28px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: color 0.2s;
+        line-height: 1;
+        padding: 0;
+        background: none;
+        border: none;
+    }
+
+    .close-modal:hover,
+    .close-modal:focus {
+        color: var(--danger-color);
+        text-decoration: none;
+    }
+
+    .modal-body {
+        padding: 24px;
+        overflow-y: auto;
+        flex-grow: 1;
+        color: var(--text-primary);
+        line-height: 1.6;
+    }
+
+    .modal-body p {
+        margin: 0 0 12px 0;
+    }
+
+    .modal-body ul {
+        margin: 12px 0;
+        padding-left: 20px;
+    }
+
+    .modal-body li {
+        margin: 6px 0;
+    }
+
+    /* Engine Action Buttons */
+    .refresh-btn[title="Start Engine"],
+    .refresh-btn[title="Start Competition"] {
+        color: #28a745;
+    }
+
+    .refresh-btn[title="Stop Engine"],
+    .refresh-btn[title="Stop Competition"] {
+        color: #dc3545;
+    }
+
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: 40px;
+        color: var(--text-secondary);
+    }
+
+    /* Responsive Modal */
+    @media screen and (max-width: 768px) {
+        .modal-content {
+            width: 95%;
+            max-height: 90vh;
+        }
+
+        .modal-header {
+            padding: 16px 20px;
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        .modal-header h3 {
+            font-size: 1.1rem;
+        }
+    }
+</style>
+{% endblock %}

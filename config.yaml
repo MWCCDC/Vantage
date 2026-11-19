@@ -1,0 +1,31 @@
+# config.yaml
+oidc:
+  discovery_url: "https://auth.ccdc.events/application/o/vantage/.well-known/openid-configuration"
+  redirect_uri: "https://vantage.ccdc.events/callback" # Match this in your IdP settings
+  
+  # Scopes to request
+  scopes:
+    - "openid"
+    - "profile"
+    - "email"
+    #- "groups" # Optional: if your IdP supports group claims
+
+# Define roles for Vantage. Then define what OIDC groups are part of said roles.
+roles:
+  admin:
+    - "Vantage-Admin"
+  blue:
+    - "Team-Blue"
+  green:
+    - "Team-Green"
+  orange:
+    - "Team-Orange"
+  red:
+    - "Team-Red"
+  white:
+    - "Team-White"
+
+# Optional: Default role if no groups match (set to null to deny access)
+default_role: null
+
+competition_title: "MWCCDC"

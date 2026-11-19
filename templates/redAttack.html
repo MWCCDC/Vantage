@@ -1,0 +1,441 @@
+{% extends "base.html" %}
+
+{% block title %}Red Team Attacks{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <!-- Page Header -->
+    <div class="page-header">
+        <h1>Red Team Attacks</h1>
+        <p class="subtitle">Record successful attacks against blue teams</p>
+    </div>
+
+    <!-- Config Error Alert -->
+    {% if refs_error %}
+    <div class="ranking-section" style="border-color: var(--danger-color); background-color: rgba(220, 53, 69, 0.05);">
+        <div style="display: flex; align-items: center; gap: 15px; padding: 10px;">
+            <span style="font-size: 2rem;">⚠️</span>
+            <div>
+                <h3 style="margin: 0 0 5px 0; color: var(--danger-color);">Reference Config Error</h3>
+                <p style="margin: 0; color: var(--text-secondary);">{{ refs_error }}</p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- SECTION 1: Attack Entry Form -->
+    <div class="ranking-section">
+        <div class="section-header">
+            <h2>Submit Attack</h2>
+        </div>
+
+        <form action="{{ url_for('red_attack.submit_attack') }}" method="POST" class="attack-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+            <div class="form-group">
+                <label for="refID">Attack Type (Reference ID) *</label>
+                <select name="refID" id="refID" required>
+                    <option value="" disabled selected>-- Select an attack --</option>
+                    {% for ref in score_refs %}
+                    <option value="{{ ref.ref_id }}" data-type="{{ ref.type }}" data-desc="{{ ref.desc }}" data-points="{{ ref.points }}">
+                        {{ ref.ref_id }} — {{ ref.type }} · {{ ref.desc|truncate(60, true) }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Successful Against *</label>
+                {% if active_teams %}
+                <div class="team-checkbox-grid">
+                    {% for team in active_teams %}
+                    <label class="team-checkbox">
+                        <input type="checkbox" name="teams" value="{{ team.id }}">
+                        <span>Team {{ team.team_number }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+                <small style="color: var(--text-secondary);">
+                    <a href="#" onclick="toggleAllTeams(); return false;" id="teamToggleLink">Select All</a>
+                </small>
+                {% else %}
+                <p style="color: var(--text-secondary);">No active teams found.</p>
+                {% endif %}
+            </div>
+
+            <div class="optional-fields">
+                <div class="form-group">
+                    <label for="srcIP">Source IP</label>
+                    <input type="text" name="srcIP" id="srcIP" placeholder="e.g., 10.10.10.5">
+                </div>
+                <div class="form-group">
+                    <label for="dstIP">Destination IP</label>
+                    <input type="text" name="dstIP" id="dstIP" placeholder="e.g., 192.168.1.20">
+                </div>
+                <div class="form-group">
+                    <label for="dstHost">Destination Host</label>
+                    <input type="text" name="dstHost" id="dstHost" placeholder="e.g., dc01.corp.local">
+                </div>
+                <div class="form-group">
+                    <label for="dstService">Destination Service</label>
+                    <input type="text" name="dstService" id="dstService" placeholder="e.g., SMB, HTTP, SSH">
+                </div>
+                <div class="form-group form-group-notes">
+                    <label for="notes">Notes</label>
+                    <textarea name="notes" id="notes" rows="1" placeholder="Optional context for the attack"></textarea>
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="login-btn">➕ Record Attack</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- SECTION 2: Recorded Red Team Scores -->
+    <div class="ranking-section" style="margin-top: 30px;">
+        <div class="section-header">
+            <h2>Recorded Attacks</h2>
+        </div>
+
+        {% if teams_scores %}
+        <div class="bulk-toggle-bar">
+            <button type="button" class="refresh-btn" onclick="expandAllSections()">Expand All</button>
+            <button type="button" class="refresh-btn" onclick="collapseAllSections()">Collapse All</button>
+        </div>
+
+        {% for team_id, data in teams_scores.items() %}
+        <div class="ranking-section team-section" id="team-section-{{ team_id }}">
+
+            <!-- Team Header -->
+            <div class="section-header team-header-row" onclick="toggleTeamSection('{{ team_id }}')">
+                <h2>
+                    <span class="expand-arrow" id="arrow-{{ team_id }}">▶</span>
+                    Team {{ data.team.team_number }}
+                </h2>
+
+                <div class="team-header-actions" onclick="event.stopPropagation()">
+                    <div class="team-total-badge">
+                        Total: <strong>{{ data.team_total }}</strong> pts
+                    </div>
+                </div>
+            </div>
+
+            <!-- Team Content (Grouped by refID) -->
+            <div class="team-content" id="content-{{ team_id }}" style="display: none;">
+                {% for ref_id, ref_data in data.refs.items() %}
+                {% set unique_id = team_id ~ '-' ~ (ref_id|replace(' ', '_')|replace('-', '--')) %}
+                <div class="category-section">
+                    <div class="category-header" onclick="toggleRefSection('{{ unique_id }}')">
+                        <span class="expand-arrow" id="arrow-ref-{{ unique_id }}">▶</span>
+                        <strong>{% if ref_id == 'NO_REF' %}No Reference ID{% else %}<code>{{ ref_id }}</code>{% endif %}</strong>
+                        {% if ref_id != 'NO_REF' and ref_id in ref_lookup %}
+                        <span class="status-badge">{{ ref_lookup[ref_id].type }}</span>
+                        {% endif %}
+                        <span class="category-count">{{ ref_data.scores|length }} score(s)</span>
+                        <span class="category-total">Total: {{ ref_data.total }}</span>
+                    </div>
+
+                    <div class="category-content" id="content-ref-{{ unique_id }}" style="display: none;">
+                        <div class="table-container">
+                            <table class="ranking-table">
+                                <thead>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Points</th>
+                                        <th>Description</th>
+                                        <th>Scorer</th>
+                                        <th style="width: 50px;"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for score in ref_data.scores %}
+                                    <tr>
+                                        <td class="timestamp-cell" data-utc="{{ score.timestamp.isoformat() }}">Loading...</td>
+                                        <td><strong>{{ score.points }}</strong></td>
+                                        <td>{{ score.description }}</td>
+                                        <td>{{ score.scorer_username }}</td>
+                                        <td style="text-align: center;">
+                                            <button type="button" class="metadata-btn" title="View Metadata" onclick="loadMetadata({{ score.id }})">
+                                                🔍
+                                            </button>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="empty-state" style="padding: 40px;">
+            <p style="color: var(--text-secondary);">No red team scores recorded yet.</p>
+            <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                Submit an attack above or add scores via the API to see them here.
+            </p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Metadata Modal -->
+<div id="metadataModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Score Metadata</h3>
+            <span class="close-modal" onclick="closeMetadataModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <div id="metadataLoader" style="text-align: center; padding: 20px; color: var(--text-secondary);">
+                Loading...
+            </div>
+            <pre id="metadataContent" style="display: none; background: var(--hover-bg); padding: 15px; border-radius: 4px; overflow-x: auto; font-size: 0.9rem; line-height: 1.4;"></pre>
+        </div>
+    </div>
+</div>
+
+<script>
+
+    // --- Team Checkbox Select All Toggle ---
+    let allTeamsSelected = false;
+    function toggleAllTeams() {
+        const boxes = document.querySelectorAll('input[name="teams"]');
+        allTeamsSelected = !allTeamsSelected;
+        boxes.forEach(box => box.checked = allTeamsSelected);
+        document.getElementById('teamToggleLink').textContent = allTeamsSelected ? 'Deselect All' : 'Select All';
+    }
+
+    // --- Local Time Conversion (oldest first, converted to viewer's timezone) ---
+    document.addEventListener('DOMContentLoaded', () => {
+        const cells = document.querySelectorAll('.timestamp-cell');
+        cells.forEach(cell => {
+            const utcString = cell.getAttribute('data-utc');
+            if (utcString) {
+                let isoString = utcString;
+                if (!isoString.endsWith('Z')) isoString += 'Z';
+                const date = new Date(isoString);
+                if (isNaN(date.getTime())) {
+                    cell.textContent = "Invalid Date";
+                    return;
+                }
+                const options = {
+                    year: 'numeric', month: '2-digit', day: '2-digit',
+                    hour: '2-digit', minute: '2-digit', second: '2-digit',
+                    hour12: false, timeZoneName: 'short'
+                };
+                cell.textContent = date.toLocaleString(undefined, options);
+            }
+        });
+    });
+
+    // --- Team Section Toggle ---
+    function toggleTeamSection(teamId) {
+        const content = document.getElementById('content-' + teamId);
+        const arrow = document.getElementById('arrow-' + teamId);
+        const isVisible = content.style.display !== 'none';
+
+        if (isVisible) {
+            content.style.display = 'none';
+            arrow.textContent = '▶';
+        } else {
+            content.style.display = '';
+            arrow.textContent = '▼';
+        }
+    }
+
+    // --- RefID Section Toggle ---
+    function toggleRefSection(uniqueId) {
+        const content = document.getElementById('content-ref-' + uniqueId);
+        const arrow = document.getElementById('arrow-ref-' + uniqueId);
+        const isVisible = content.style.display !== 'none';
+
+        if (isVisible) {
+            content.style.display = 'none';
+            arrow.textContent = '▶';
+        } else {
+            content.style.display = '';
+            arrow.textContent = '▼';
+        }
+    }
+
+    // --- Bulk Expand/Collapse ---
+    function expandAllSections() {
+        document.querySelectorAll('.team-content').forEach(el => el.style.display = '');
+        document.querySelectorAll('.team-section .expand-arrow').forEach(el => el.textContent = '▼');
+        document.querySelectorAll('.category-content').forEach(el => el.style.display = '');
+        document.querySelectorAll('.category-section .expand-arrow').forEach(el => el.textContent = '▼');
+    }
+
+    function collapseAllSections() {
+        document.querySelectorAll('.team-content').forEach(el => el.style.display = 'none');
+        document.querySelectorAll('.team-section .expand-arrow').forEach(el => el.textContent = '▶');
+        document.querySelectorAll('.category-content').forEach(el => el.style.display = 'none');
+        document.querySelectorAll('.category-section .expand-arrow').forEach(el => el.textContent = '▶');
+    }
+
+    // --- Metadata Modal Logic ---
+    function loadMetadata(scoreId) {
+        const modal = document.getElementById('metadataModal');
+        const loader = document.getElementById('metadataLoader');
+        const content = document.getElementById('metadataContent');
+
+        modal.style.display = 'flex';
+        loader.style.display = 'block';
+        content.style.display = 'none';
+        content.textContent = '';
+
+        fetch(`/red/attacks/metadata/${scoreId}`)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Failed to load metadata');
+                }
+                return response.json();
+            })
+            .then(data => {
+                loader.style.display = 'none';
+                content.style.display = 'block';
+                content.textContent = JSON.stringify(data, null, 2);
+            })
+            .catch(error => {
+                loader.style.display = 'none';
+                content.style.display = 'block';
+                content.textContent = 'Error loading metadata: ' + error.message;
+                content.style.color = 'var(--danger-color)';
+            });
+    }
+
+    function closeMetadataModal() {
+        document.getElementById('metadataModal').style.display = 'none';
+    }
+
+    window.onclick = function(event) {
+        const modal = document.getElementById('metadataModal');
+        if (event.target == modal) {
+            closeMetadataModal();
+        }
+    }
+</script>
+
+<style>
+    /* Attack Form */
+    #refID { width: 100%; max-width: 900px; }
+    .attack-form { display: flex; flex-direction: column; gap: 20px; }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-group label { font-size: 0.9rem; font-weight: 600; color: var(--text-secondary); }
+    .form-group input, .form-group select, .form-group textarea {
+        padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;
+        background: var(--bg-secondary); color: var(--text-main); font-size: 0.95rem; font-family: inherit;
+    }
+    .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+        outline: none; border-color: var(--primary-blue); box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.2);
+    }
+    .optional-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; }
+    .form-group-notes { grid-column: 1 / -1; }
+    .form-actions { text-align: right; }
+
+    /* Ref details panel */
+    .ref-details {
+        margin-top: 8px; padding: 10px 12px;
+        background: var(--hover-bg); border: 1px solid var(--border-color); border-radius: 6px;
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+
+    /* Team checkbox grid */
+    .team-checkbox-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+    .team-checkbox {
+        display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+        padding: 8px 14px; border: 1px solid var(--border-color); border-radius: 6px;
+        background: var(--bg-secondary); color: var(--text-main); font-weight: 600; font-size: 0.9rem;
+        transition: border-color var(--transition-speed), background-color var(--transition-speed);
+        user-select: none;
+    }
+    .team-checkbox:hover { border-color: var(--primary-blue); }
+    .team-checkbox:has(input:checked) { border-color: var(--primary-blue); background: rgba(13, 110, 253, 0.12); }
+
+    /* Collapsible table (mirrors scores.html patterns) */
+    .bulk-toggle-bar { display: flex; gap: 10px; margin-bottom: 15px; }
+    .team-header-row {
+        display: flex; justify-content: space-between; align-items: center;
+        flex-wrap: wrap; gap: 15px; cursor: pointer; user-select: none;
+    }
+    .team-header-row h2 { display: flex; align-items: center; gap: 8px; }
+    .expand-arrow { display: inline-block; transition: transform 0.2s ease; font-size: 0.85rem; color: var(--text-secondary); }
+    .team-header-actions { display: flex; align-items: center; gap: 10px; }
+    .team-total-badge {
+        background: var(--primary-blue); color: white; padding: 4px 12px;
+        border-radius: 12px; font-size: 0.85rem; font-weight: 600;
+        margin-right: 10px;
+    }
+    .status-badge {
+        padding: 4px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 600; text-transform: uppercase;
+        background-color: var(--hover-bg); color: var(--text-primary); border: 1px solid var(--border-color);
+    }
+    .category-section {
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        margin-bottom: 10px;
+        overflow: hidden;
+        background-color: var(--bg-content);
+    }
+    .category-header {
+        padding: 10px 16px;
+        background-color: var(--hover-bg);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        transition: background-color var(--transition-speed);
+        border-bottom: 1px solid var(--border-color);
+    }
+    .category-header:hover { background-color: var(--active-bg); }
+    .category-count { margin-left: auto; font-size: 0.85rem; color: var(--text-secondary); }
+    .category-total {
+        font-size: 0.85rem; font-weight: 600; color: var(--text-primary);
+        background: rgba(0,0,0,0.05); padding: 2px 8px; border-radius: 4px;
+    }
+    code {
+        background: var(--hover-bg); padding: 2px 6px; border-radius: 4px;
+        font-size: 0.9em; color: var(--primary-orange);
+    }
+
+    /* Metadata button */
+    .metadata-btn {
+        background: none; border: none; cursor: pointer; font-size: 1.1rem;
+        padding: 4px 8px; transition: transform 0.2s, opacity 0.2s; opacity: 0.6;
+        color: var(--text-secondary);
+    }
+    .metadata-btn:hover { transform: scale(1.2); opacity: 1; color: var(--primary-blue); }
+
+    /* Modal */
+    .modal {
+        display: none; position: fixed; z-index: 1000; left: 0; top: 0;
+        width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5);
+        backdrop-filter: blur(4px); align-items: center; justify-content: center;
+    }
+    .modal-content {
+        background-color: var(--bg-content); margin: auto; padding: 0;
+        border: 1px solid var(--border-color); border-radius: 8px;
+        width: 80%; max-width: 800px; max-height: 80vh;
+        display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    }
+    .modal-header {
+        padding: 15px 20px; border-bottom: 1px solid var(--border-color);
+        display: flex; justify-content: space-between; align-items: center;
+        background-color: var(--hover-bg); border-radius: 8px 8px 0 0;
+    }
+    .modal-header h3 { margin: 0; font-size: 1.2rem; color: var(--text-primary); }
+    .close-modal { color: var(--text-secondary); font-size: 28px; font-weight: bold; cursor: pointer; transition: color 0.2s; }
+    .close-modal:hover, .close-modal:focus { color: var(--danger-color); text-decoration: none; }
+    .modal-body { padding: 20px; overflow-y: auto; flex-grow: 1; }
+    .empty-state { text-align: center; padding: 40px; color: var(--text-secondary); font-style: italic; }
+
+    @media (max-width: 768px) {
+        .team-header-row { flex-direction: column; align-items: flex-start; }
+        .modal-content { width: 95%; max-height: 90vh; }
+    }
+</style>
+{% endblock %}
