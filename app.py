@@ -15,8 +15,6 @@ from routes.decorators import login_required, role_required, api_key_required
 from utils.valkey_client import get_valkey_client
 from utils.scoreCalculation import calculate_team_standings, calculate_overall_stats
 from routes.quotient import get_celery_task_status as get_quotient_celery_task_status
-from routes.redConfig import calculate_red_team_scores
-from routes.orangeConfig import calculate_orange_team_scores
 from routes.redAttack import red_attacks
 
 # Import DB and Models from the models package
