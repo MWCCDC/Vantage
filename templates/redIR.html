@@ -1,0 +1,997 @@
+{% extends "base.html" %}
+
+{% block title %}Incident Response Scoring{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <!-- Page Header -->
+    <div class="page-header">
+        <h1>Incident Response Scoring</h1>
+        <p class="subtitle">Score blue team incident response submissions</p>
+    </div>
+
+    <!-- Wizard Steps Indicator -->
+    <div class="wizard-steps" id="wizardSteps">
+        <div class="wizard-step" id="stepIndicator-1">
+            <span class="step-number">1</span>
+            <span class="step-label">Select Team</span>
+        </div>
+        <div class="wizard-step-sep"></div>
+        <div class="wizard-step" id="stepIndicator-2">
+            <span class="step-number">2</span>
+            <span class="step-label">Submission Source</span>
+        </div>
+        <div class="wizard-step-sep"></div>
+        <div class="wizard-step" id="stepIndicator-3">
+            <span class="step-number">3</span>
+            <span class="step-label">Score Report</span>
+        </div>
+    </div>
+
+    <!-- Global error banner (survives stage switches until cleared) -->
+    <div id="irErrorBanner" class="ir-banner ir-banner-error" style="display:none;">
+        <span class="banner-icon">✗</span>
+        <span id="irErrorText"></span>
+        <button class="banner-close" onclick="hideBanner('irErrorBanner')" aria-label="Close">×</button>
+    </div>
+
+    <!-- Success banner -->
+    <div id="irSuccessBanner" class="ir-banner ir-banner-success" style="display:none;">
+        <span class="banner-icon">✓</span>
+        <span id="irSuccessText"></span>
+        <button class="banner-close" onclick="hideBanner('irSuccessBanner')" aria-label="Close">×</button>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- STAGE 1: Team Selection                                       -->
+    <!-- ============================================================ -->
+    <div class="ranking-section" id="stage1">
+        <div class="section-header">
+            <h2>Select a Team</h2>
+            <p style="color: var(--text-secondary); font-size: 0.9rem; margin: 0;">
+                Which team's incident response are you scoring? Only active teams are shown.
+            </p>
+        </div>
+
+        {% if active_teams %}
+        <div class="team-select-grid">
+            {% for team in active_teams %}
+            <button type="button"
+                    class="team-select-card"
+                    data-team-id="{{ team.id }}"
+                    data-team-number="{{ team.team_number }}"
+                    data-team-name="{{ team.team_name }}"
+                    onclick="selectTeam({{ team.id }}, {{ team.team_number }}, '{{ team.team_name|e }}')">
+                <span class="team-select-number">Team {{ team.team_number }}</span>
+                <span class="team-select-name">{{ team.team_name }}</span>
+            </button>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state" style="padding: 40px;">
+            <p style="color: var(--text-secondary);">No active teams found.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- STAGE 2: Submission Source                                     -->
+    <!-- ============================================================ -->
+    <div class="ranking-section" id="stage2" style="display:none;">
+        <div class="section-header stage2-header">
+            <h2>Submission Source <span id="stage2TeamBadge" class="stage2-team-badge"></span></h2>
+            <button type="button" class="back-btn" onclick="goStage(1)">← Change Team</button>
+        </div>
+
+        <div class="source-cards">
+            <!-- New submission -->
+            <button type="button" class="source-card" onclick="startNewSubmission()">
+                <span class="source-icon">📝</span>
+                <span class="source-title">New Submission</span>
+                <span class="source-desc">Score an IR report from scratch.</span>
+            </button>
+
+            <!-- Edit previous -->
+            <button type="button" class="source-card" onclick="showPreviousSubmissions()">
+                <span class="source-icon">✏️</span>
+                <span class="source-title">Edit Previous Submission</span>
+                <span class="source-desc">Modify an IR score that has already been recorded.</span>
+            </button>
+
+            <!-- Pending report (future API) -->
+            <div class="source-card source-card-disabled" title="Requires the pending documents API — coming soon">
+                <span class="source-icon">📨</span>
+                <span class="source-title">Score Pending Report</span>
+                <span class="source-desc">Pick from reports submitted by the team but not yet scored.</span>
+                <span class="source-soon-badge">Coming Soon</span>
+            </div>
+        </div>
+
+        <!-- Previous submissions list (populated via JS) -->
+        <div id="prevSubmissionsWrap" style="display:none;">
+            <div class="section-header" style="margin-top: 25px;">
+                <h3>Existing IR Submissions</h3>
+            </div>
+            <div class="table-container">
+                <table class="ranking-table">
+                    <thead>
+                        <tr>
+                            <th>Report Name</th>
+                            <th>Points</th>
+                            <th>Submitted</th>
+                            <th>Scorer</th>
+                            <th style="width: 120px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="prevSubmissionsBody">
+                        <tr id="prevSubmissionsEmpty" style="display:none;">
+                            <td colspan="5" style="text-align:center; color: var(--text-secondary); padding: 20px;">
+                                No IR submissions recorded for this team yet.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- STAGE 3: The Form                                              -->
+    <!-- ============================================================ -->
+    <div class="ranking-section" id="stage3" style="display:none;">
+        <div class="section-header stage2-header">
+            <h2 id="stage3Title">Incident Response Details <span id="stage3ModeBadge" class="stage2-team-badge"></span></h2>
+            <button type="button" class="back-btn" onclick="goStage(2)">← Back</button>
+        </div>
+
+        <div class="ir-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+            <div class="form-group">
+                <label for="irName">IR Name (report filename) *</label>
+                <input type="text" id="irName" maxlength="100" placeholder="e.g., Team4_IR_Day2_Phishing"
+                       autocomplete="off">
+            </div>
+
+            <div class="form-group">
+                <label for="irNotes">Notes / Feedback</label>
+                <textarea id="irNotes" rows="3"
+                          placeholder="Feedback delivered to the blue team about this submission"></textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="irPoints">Points Returned to Team *</label>
+                <div class="points-row">
+                    <input type="number" id="irPoints" step="1" placeholder="0">
+                    <span class="points-helper" id="pointsHelper">Sum of attack points below: 0</span>
+                    <a href="#" id="resumeAutoSum" style="display:none;"
+                       onclick="resumeAutoSum(); return false;">Resume auto-sum</a>
+                </div>
+                <small style="color: var(--text-secondary);">
+                    Auto-fills from the per-attack boxes as a helper, but you may set any total —
+                    e.g. credit for a solid writeup even when no attack was recorded, or partial credit.
+                </small>
+            </div>
+        </div>
+
+        <!-- Recorded attacks reference table -->
+        <div class="section-header attack-table-header" style="margin-top: 25px;">
+            <div class="attack-table-title">
+                <h3>Recorded Attacks</h3>
+                <span id="attackCountBadge" class="attack-count-badge"></span>
+            </div>
+            <p style="color: var(--text-secondary); font-size: 0.9rem; margin: 0;">
+                Attacks never referenced by an IR are listed first. Enter points to return per attack —
+                overlapping references are a clue the team re-submitted or an attack was misidentified.
+                Use the 🔍 button to view an attack's full metadata (IPs, hosts, services) to help
+                confirm whether two IRs describe the same incident.
+            </p>
+        </div>
+
+        <div class="table-container">
+            <table class="ranking-table attack-ref-table">
+                <thead>
+                    <tr>
+                        <th style="width: 145px;">Time</th>
+                        <th style="width: 110px;">Ref ID</th>
+                        <th>Description</th>
+                        <th style="width: 85px;">Points</th>
+                        <th style="width: 110px;">Scorer</th>
+                        <th style="width: 165px;">Status</th>
+                        <th style="width: 130px;">Points Returned</th>
+                        <th style="width: 50px;"></th>
+                    </tr>
+                </thead>
+                <tbody id="attacksBody">
+                    <tr id="attacksEmpty" style="display:none;">
+                        <td colspan="8" style="text-align:center; color: var(--text-secondary); padding: 20px;">
+                            No recorded attacks for this team. You can still award points above for
+                            a well-written IR covering an undocumented intrusion attempt.
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="form-actions ir-submit-row">
+            <span id="submittingIndicator" style="display:none; color: var(--text-secondary);">Saving…</span>
+            <button type="button" class="login-btn" id="submitButton" onclick="submitIr()">💾 Save IR Score</button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- Missing-attack confirmation modal                               -->
+<!-- ============================================================ -->
+<div id="missingModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 style="color: var(--danger-color);">⚠ Referenced attacks missing</h3>
+            <span class="close-modal" onclick="closeMissingModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <p id="missingModalMessage" style="margin-top: 0; color: var(--text-primary);"></p>
+            <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                The following attack(s) were referenced by this submission but no longer exist
+                in the database. Saving will remove them from this IR's references.
+            </p>
+            <ul id="missingModalList" class="missing-list"></ul>
+            <div class="modal-actions">
+                <button type="button" class="back-btn" onclick="closeMissingModal()">Cancel</button>
+                <button type="button" class="login-btn" onclick="confirmOverwriteMissing()">Save Anyway</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- Attack metadata modal (mirrors redAttack.html)                  -->
+<!-- ============================================================ -->
+<div id="metadataModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Attack Metadata</h3>
+            <span class="close-modal" onclick="closeMetadataModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <div id="metadataLoader" style="text-align: center; padding: 20px; color: var(--text-secondary);">
+                Loading...
+            </div>
+            <pre id="metadataContent" style="display: none; background: var(--hover-bg); padding: 15px; border-radius: 4px; overflow-x: auto; font-size: 0.9rem; line-height: 1.4;"></pre>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- Globals -----------------------------------------------------
+    const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]')?.content ||
+                       '{{ csrf_token() }}';
+
+    // Wizard state
+    const irState = {
+        teamId: null,
+        teamNumber: null,
+        teamName: null,
+        editingIrId: null,      // null = new submission
+        editingName: null,      // original name of the IR being edited
+        teamData: null,         // last fetched team payload (attacks + IR list)
+        irDetail: null,         // detail of the IR being edited (if editing)
+        autoSum: true,          // auto-sum active until the grader edits points
+        pendingPayload: null     // payload parked awaiting overwrite confirmation
+    };
+
+    // --- Utilities ----------------------------------------------------
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+    }
+
+    /**
+     * Truncating cell content: renders text inside an ellipsis-clamped
+     * span with the full value in a native title tooltip, so monster-long
+     * IR filenames never blow out the table width. Hover to see the
+     * whole thing, no horizontal scroll needed.
+     *
+     * cls: extra CSS classes for the span (e.g. 'ir-ref-code').
+     */
+    function truncateCell(text, cls) {
+        const t = (text === null || text === undefined || text === '') ? '—' : String(text);
+        return `<span class="ellip ${cls || ''}" title="${escapeHtml(t)}">${escapeHtml(t)}</span>`;
+    }
+
+    function formatLocal(iso) {
+        if (!iso) return '—';
+        let s = iso;
+        if (!s.endsWith('Z')) s += 'Z';
+        const d = new Date(s);
+        if (isNaN(d.getTime())) return iso;
+        return d.toLocaleString(undefined, {
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+            hour12: false, timeZoneName: 'short'
+        });
+    }
+
+    async function fetchJson(url, options) {
+        const opts = Object.assign({headers: {'X-CSRFToken': CSRF_TOKEN}}, options || {});
+        if (opts.body && typeof opts.body !== 'string') {
+            opts.body = JSON.stringify(opts.body);
+        }
+        if (opts.body) opts.headers['Content-Type'] = 'application/json';
+        const resp = await fetch(url, opts);
+        let data = null;
+        try { data = await resp.json(); } catch (e) { /* non-JSON error body */ }
+        return {resp, data};
+    }
+
+    async function fetchTeamData(excludeIrId) {
+        /**
+         * Fetch the current team payload. Called fresh EVERY time stage 3
+         * is constructed so the reference flags always reflect the latest
+         * submissions — a just-saved IR must immediately flag its attacks
+         * as referenced. excludeIrId omits one IR from the reference scan
+         * (used when editing so a submission never flags itself).
+         */
+        let url = `/IR/scoreIRs/team/${irState.teamId}/data`;
+        if (excludeIrId) url += `?exclude_ir=${excludeIrId}`;
+        const {resp, data} = await fetchJson(url);
+        if (!resp.ok || !data) {
+            showError(data?.error || 'Failed to load team data.');
+            return false;
+        }
+        irState.teamData = data;
+        return true;
+    }
+
+    function showError(message) {
+        document.getElementById('irErrorText').textContent = message;
+        document.getElementById('irErrorBanner').style.display = 'flex';
+        document.getElementById('irErrorBanner').scrollIntoView({behavior: 'smooth', block: 'center'});
+    }
+
+    function showSuccess(message) {
+        document.getElementById('irSuccessText').textContent = message;
+        document.getElementById('irSuccessBanner').style.display = 'flex';
+    }
+
+    function hideBanner(id) {
+        document.getElementById(id).style.display = 'none';
+    }
+
+    function clearBanners() {
+        hideBanner('irErrorBanner');
+        hideBanner('irSuccessBanner');
+    }
+
+    // --- Wizard navigation ---------------------------------------------
+    function goStage(n) {
+        for (let i = 1; i <= 3; i++) {
+            document.getElementById('stage' + i).style.display = (i === n) ? '' : 'none';
+        }
+        document.querySelectorAll('.wizard-step').forEach(el => el.classList.remove('active', 'done'));
+        for (let i = 1; i <= 3; i++) {
+            const el = document.getElementById('stepIndicator-' + i);
+            if (i < n) el.classList.add('done');
+            else if (i === n) el.classList.add('active');
+        }
+        clearBanners();
+        window.scrollTo({top: 0});
+    }
+
+    // --- Stage 1: team selection ----------------------------------------
+    async function selectTeam(teamId, teamNumber, teamName) {
+        clearBanners();
+        irState.teamId = teamId;
+        irState.teamNumber = teamNumber;
+        irState.teamName = teamName;
+
+        if (!await fetchTeamData(null)) return;
+        document.getElementById('stage2TeamBadge').textContent = `Team ${teamNumber}`;
+        goStage(2);
+        document.getElementById('prevSubmissionsWrap').style.display = 'none';
+    }
+
+    // --- Stage 2: source selection ---------------------------------------
+    function showPreviousSubmissions() {
+        const wrap = document.getElementById('prevSubmissionsWrap');
+        const body = document.getElementById('prevSubmissionsBody');
+        const empty = document.getElementById('prevSubmissionsEmpty');
+        body.querySelectorAll('tr[data-ir-id]').forEach(tr => tr.remove());
+
+        const subs = irState.teamData?.ir_submissions || [];
+        empty.style.display = subs.length ? 'none' : '';
+
+        subs.forEach(sub => {
+            const tr = document.createElement('tr');
+            tr.setAttribute('data-ir-id', sub.id);
+            tr.innerHTML = `
+                <td><strong>${truncateCell(sub.name, 'ir-name-ellip')}</strong></td>
+                <td>${escapeHtml(sub.points)}</td>
+                <td>${escapeHtml(formatLocal(sub.timestamp))}</td>
+                <td>${escapeHtml(sub.scorer)}</td>
+                <td style="text-align:center;">
+                    <button type="button" class="refresh-btn" onclick="editSubmission(${sub.id})">Edit</button>
+                </td>`;
+            body.appendChild(tr);
+        });
+        wrap.style.display = '';
+        wrap.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+    }
+
+    // --- Stage 3 construction --------------------------------------------
+    async function startNewSubmission() {
+        clearBanners();
+        irState.editingIrId = null;
+        irState.irDetail = null;
+        irState.autoSum = true;
+
+        // Fresh fetch at the point of use: guarantees the reference flags
+        // include any IR submitted moments ago (fixes stale-flag issue).
+        if (!await fetchTeamData(null)) return;
+
+        buildStage3(null);
+    }
+
+    async function editSubmission(irId) {
+        clearBanners();
+        const {resp, data} = await fetchJson(`/IR/scoreIRs/${irId}`);
+        if (!resp.ok || !data) {
+            showError(data?.error || 'Failed to load that IR submission.');
+            return;
+        }
+
+        // Team data EXCLUDING this IR so its own references don't show up
+        // as overlap warnings.
+        if (!await fetchTeamData(irId)) return;
+
+        irState.editingIrId = irId;
+        irState.irDetail = data;
+        irState.autoSum = false;  // stored points are authoritative, don't clobber
+        buildStage3(data);
+    }
+
+    function buildStage3(detail) {
+        const modeBadge = document.getElementById('stage3ModeBadge');
+        if (detail) {
+            modeBadge.title = detail.name;
+            modeBadge.textContent = `Editing: ${detail.name}`;
+            document.getElementById('irName').value = detail.name;
+            document.getElementById('irNotes').value = detail.notes;
+            document.getElementById('irPoints').value = detail.points;
+        } else {
+            modeBadge.title = '';
+            modeBadge.textContent = `New Submission — Team ${irState.teamNumber}`;
+            document.getElementById('irName').value = '';
+            document.getElementById('irNotes').value = '';
+            document.getElementById('irPoints').value = '';
+        }
+        document.getElementById('resumeAutoSum').style.display = 'none';
+
+        renderAttacks(detail ? detail.attack_refs : null);
+        goStage(3);
+    }
+
+    function renderAttacks(prefillRefs) {
+        const body = document.getElementById('attacksBody');
+        const empty = document.getElementById('attacksEmpty');
+        body.querySelectorAll('tr[data-attack-id], tr.attack-group-separator').forEach(tr => tr.remove());
+
+        const attacks = irState.teamData?.attacks || [];
+        empty.style.display = attacks.length ? 'none' : '';
+        document.getElementById('attackCountBadge').textContent = `${attacks.length} total`;
+
+        const prefillMap = {};
+        (prefillRefs || []).forEach(r => { prefillMap[r.score_id] = r.points; });
+
+        let sawReferenced = false;
+        attacks.forEach(atk => {
+            // Pronounced separator between the unreferenced group and the
+            // already-referenced group, so the split reads as intentional.
+            if (atk.is_referenced && !sawReferenced && body.querySelector('tr[data-attack-id]')) {
+                const sep = document.createElement('tr');
+                sep.className = 'attack-group-separator';
+                sep.innerHTML = `<td colspan="8">
+                    Already referenced by an existing IR below — verify this submission
+                    isn't covering the same incident again before re-awarding points
+                </td>`;
+                body.appendChild(sep);
+            }
+            sawReferenced = sawReferenced || atk.is_referenced;
+
+            const tr = document.createElement('tr');
+            tr.setAttribute('data-attack-id', atk.id);
+
+            // Status cell: unreferenced badge or overlap warning.
+            // Referencing IR names are truncated inside the warning so a
+            // monster filename can't push the points box off-screen.
+            let statusCell;
+            if (atk.is_referenced) {
+                const names = atk.referenced_by.map(r =>
+                    `<code class="ellip ir-ref-code" title="${escapeHtml(r.ir_name)}">${escapeHtml(r.ir_name)}</code>`
+                ).join(', ');
+                statusCell = `<span class="ref-warning" title="Already referenced by another IR — check for misidentification or re-submission">
+                        ⚠ ${names}</span>`;
+            } else {
+                statusCell = `<span class="status-badge status-unref">Not referenced</span>`;
+            }
+
+            const prefillVal = (atk.id in prefillMap) ? prefillMap[atk.id] : '';
+            tr.innerHTML = `
+                <td class="timestamp-cell">${escapeHtml(formatLocal(atk.timestamp))}</td>
+                <td>${truncateCell(atk.reference_id, 'ir-ref-code')}</td>
+                <td>${truncateCell(atk.description, 'attack-desc-ellip')}</td>
+                <td><strong>${escapeHtml(atk.points)}</strong></td>
+                <td>${escapeHtml(atk.scorer)}</td>
+                <td>${statusCell}</td>
+                <td>
+                    <input type="number" step="1" class="attack-pts-input"
+                           data-attack-id="${atk.id}" value="${escapeHtml(prefillVal)}"
+                           placeholder="—"
+                           oninput="recalcSum()">
+                </td>
+                <td style="text-align: center;">
+                    <button type="button" class="metadata-btn" title="View Attack Metadata"
+                            onclick="loadAttackMetadata(${atk.id})">🔍</button>
+                </td>`;
+            body.appendChild(tr);
+        });
+
+        recalcSum();
+    }
+
+    // --- Auto-sum helper --------------------------------------------------
+    function collectAttackPoints() {
+        const vals = {};
+        document.querySelectorAll('.attack-pts-input').forEach(inp => {
+            const raw = inp.value.trim();
+            if (raw === '') return;
+            const n = Number(raw);
+            if (!Number.isFinite(n)) return;
+            vals[inp.dataset.attackId] = Math.trunc(n);
+        });
+        return vals;
+    }
+
+    function currentSum() {
+        return Object.values(collectAttackPoints()).reduce((a, b) => a + b, 0);
+    }
+
+    function recalcSum() {
+        const sum = currentSum();
+        document.getElementById('pointsHelper').textContent =
+            `Sum of attack points below: ${sum}`;
+        if (irState.autoSum) {
+            document.getElementById('irPoints').value = sum;
+        }
+    }
+
+    // Grader manually edited the points field: pause auto-sum.
+    document.getElementById('irPoints').addEventListener('input', () => {
+        if (irState.autoSum) {
+            irState.autoSum = false;
+            document.getElementById('resumeAutoSum').style.display = '';
+        }
+    });
+
+    function resumeAutoSum() {
+        irState.autoSum = true;
+        document.getElementById('resumeAutoSum').style.display = 'none';
+        document.getElementById('irPoints').value = currentSum();
+    }
+
+    // --- Submission ---------------------------------------------------------
+    function buildPayload(overwriteMissing) {
+        return {
+            team_id: irState.teamId,
+            ir_name: document.getElementById('irName').value.trim(),
+            notes: document.getElementById('irNotes').value,
+            points: Math.trunc(Number(document.getElementById('irPoints').value)),
+            attack_points: collectAttackPoints(),
+            ...(irState.editingIrId ? {ir_score_id: irState.editingIrId} : {}),
+            ...(overwriteMissing ? {overwrite_missing: true} : {})
+        };
+    }
+
+    function validateLocally(payload) {
+        if (!payload.ir_name) return 'An IR name is required.';
+        if (payload.ir_name === '(unnamed)') return 'Please enter a real IR name.';
+        if (!Number.isFinite(payload.points))
+            return 'Points must be a whole number (blank is not valid — enter 0 if none).';
+        return null;
+    }
+
+    async function submitIr() {
+        clearBanners();
+        const payload = buildPayload(false);
+        const localErr = validateLocally(payload);
+        if (localErr) { showError(localErr); return; }
+
+        const btn = document.getElementById('submitButton');
+        const ind = document.getElementById('submittingIndicator');
+        btn.disabled = true;
+        ind.style.display = '';
+
+        const {resp, data} = await fetchJson('/IR/scoreIRs', {method: 'POST', body: payload});
+
+        btn.disabled = false;
+        ind.style.display = 'none';
+
+        if (!data) {
+            showError(`Server returned ${resp.status} with no details.`);
+            return;
+        }
+
+        if (resp.status === 200 && data.status === 'ok') {
+            const verb = irState.editingIrId ? 'updated' : 'recorded';
+
+            // Refresh stage-2 list data (ir_submissions). Reference flags
+            // themselves are refetched at stage-3 build time, but this also
+            // keeps the "Edit Previous Submission" table current.
+            const refreshed = await fetchJson(`/IR/scoreIRs/team/${irState.teamId}/data`);
+            if (refreshed.resp.ok) irState.teamData = refreshed.data;
+
+            goStage(2);
+            document.getElementById('prevSubmissionsWrap').style.display = 'none';
+            showSuccess(`IR "${payload.ir_name}" ${verb} — ${payload.points} pts returned to Team ${irState.teamNumber}.`);
+            return;
+        }
+
+        if (resp.status === 409 && data.status === 'confirm_missing') {
+            irState.pendingPayload = payload;
+            openMissingModal(data.missing, data.message);
+            return;
+        }
+
+        showError(data.error || `Submission failed (${resp.status}).`);
+    }
+
+    // --- Missing-attack modal -------------------------------------------------
+    function openMissingModal(missing, message) {
+        const list = document.getElementById('missingModalList');
+        list.innerHTML = '';
+        (missing || []).forEach(m => {
+            const li = document.createElement('li');
+            li.innerHTML = `Attack score <code>#${escapeHtml(m.score_id)}</code> (was ${escapeHtml(m.points)} pts)`;
+            list.appendChild(li);
+        });
+        document.getElementById('missingModalMessage').textContent = message || '';
+        document.getElementById('missingModal').style.display = 'flex';
+    }
+
+    function closeMissingModal() {
+        document.getElementById('missingModal').style.display = 'none';
+        irState.pendingPayload = null;
+    }
+
+    async function confirmOverwriteMissing() {
+        const parked = irState.pendingPayload;
+        closeMissingModal();
+        if (!parked) return;
+
+        const btn = document.getElementById('submitButton');
+        const ind = document.getElementById('submittingIndicator');
+        btn.disabled = true;
+        ind.style.display = '';
+
+        const payload = Object.assign({}, parked, {overwrite_missing: true});
+        const {resp, data} = await fetchJson('/IR/scoreIRs', {method: 'POST', body: payload});
+
+        btn.disabled = false;
+        ind.style.display = 'none';
+
+        if (resp.status === 200 && data?.status === 'ok') {
+            const refreshed = await fetchJson(`/IR/scoreIRs/team/${irState.teamId}/data`);
+            if (refreshed.resp.ok) irState.teamData = refreshed.data;
+            goStage(2);
+            document.getElementById('prevSubmissionsWrap').style.display = 'none';
+            showSuccess(`IR "${payload.ir_name}" updated — ${payload.points} pts returned to Team ${irState.teamNumber}. Note: dropped references to missing attacks.`);
+        } else {
+            showError(data?.error || `Submission failed (${resp.status}).`);
+        }
+    }
+
+    // --- Attack metadata modal (reuses the /red/attacks metadata API) --------
+    function loadAttackMetadata(scoreId) {
+        const modal = document.getElementById('metadataModal');
+        const loader = document.getElementById('metadataLoader');
+        const content = document.getElementById('metadataContent');
+
+        modal.style.display = 'flex';
+        loader.style.display = 'block';
+        content.style.display = 'none';
+        content.textContent = '';
+        content.style.color = '';
+
+        fetch(`/red/attacks/metadata/${scoreId}`, {
+            headers: {'X-CSRFToken': CSRF_TOKEN}
+        })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Failed to load metadata');
+                }
+                return response.json();
+            })
+            .then(data => {
+                loader.style.display = 'none';
+                content.style.display = 'block';
+                content.textContent = JSON.stringify(data, null, 2);
+            })
+            .catch(error => {
+                loader.style.display = 'none';
+                content.style.display = 'block';
+                content.textContent = 'Error loading metadata: ' + error.message;
+                content.style.color = 'var(--danger-color)';
+            });
+    }
+
+    function closeMetadataModal() {
+        document.getElementById('metadataModal').style.display = 'none';
+    }
+
+    window.onclick = function(event) {
+        const missingModal = document.getElementById('missingModal');
+        if (event.target === missingModal) { closeMissingModal(); return; }
+        const metaModal = document.getElementById('metadataModal');
+        if (event.target === metaModal) closeMetadataModal();
+    };
+
+    // Init: start at stage 1
+    goStage(1);
+</script>
+
+<style>
+    /* Wizard steps */
+    .wizard-steps {
+        display: flex; align-items: center; justify-content: center;
+        gap: 12px; margin-bottom: 25px; flex-wrap: wrap;
+    }
+    .wizard-step {
+        display: flex; align-items: center; gap: 8px;
+        padding: 8px 16px; border: 1px solid var(--border-color);
+        border-radius: 20px; background: var(--bg-secondary);
+        color: var(--text-secondary); font-size: 0.9rem; font-weight: 600;
+    }
+    .wizard-step.active {
+        border-color: var(--primary-blue); color: var(--text-primary);
+        background: rgba(13, 110, 253, 0.12);
+    }
+    .wizard-step.done { border-color: var(--primary-blue); color: var(--primary-blue); }
+    .step-number {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 22px; height: 22px; border-radius: 50%;
+        background: var(--hover-bg); font-size: 0.8rem;
+    }
+    .wizard-step.active .step-number { background: var(--primary-blue); color: white; }
+    .wizard-step-sep { width: 30px; height: 2px; background: var(--border-color); }
+
+    /* Banners */
+    .ir-banner {
+        display: flex; align-items: center; gap: 12px;
+        padding: 12px 16px; border-radius: 6px; margin-bottom: 20px;
+        border: 1px solid transparent; font-size: 0.95rem;
+    }
+    .ir-banner-error {
+        border-color: var(--danger-color);
+        background-color: rgba(220, 53, 69, 0.08);
+        color: var(--danger-color);
+    }
+    .ir-banner-success {
+        border-color: #198754;
+        background-color: rgba(25, 135, 84, 0.08);
+        color: #198754;
+    }
+    .ir-banner .banner-icon { font-weight: bold; font-size: 1.1rem; }
+    .ir-banner .banner-close {
+        margin-left: auto; background: none; border: none; cursor: pointer;
+        font-size: 1.4rem; color: inherit; opacity: 0.6;
+    }
+    .ir-banner .banner-close:hover { opacity: 1; }
+
+    /* Stage 1: team cards */
+    .team-select-grid {
+        display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 12px; padding: 10px 0;
+    }
+    .team-select-card {
+        display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+        padding: 16px; border: 1px solid var(--border-color); border-radius: 8px;
+        background: var(--bg-secondary); color: var(--text-main);
+        cursor: pointer; text-align: left; font-family: inherit;
+        transition: border-color var(--transition-speed), transform 0.1s ease;
+    }
+    .team-select-card:hover { border-color: var(--primary-blue); transform: translateY(-2px); }
+    .team-select-number { font-size: 1.1rem; font-weight: 700; color: var(--primary-blue); }
+    .team-select-name { font-size: 0.85rem; color: var(--text-secondary); }
+
+    /* Stage 2: source cards */
+    .stage2-header {
+        display: flex; justify-content: space-between; align-items: center;
+        flex-wrap: wrap; gap: 12px;
+    }
+    .stage2-team-badge {
+        background: var(--primary-blue); color: white; padding: 4px 12px;
+        border-radius: 12px; font-size: 0.8rem; font-weight: 600;
+        margin-left: 8px; vertical-align: middle;
+        display: inline-block; max-width: 320px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .source-cards {
+        display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 15px; padding: 10px 0;
+    }
+    .source-card {
+        display: flex; flex-direction: column; gap: 8px;
+        padding: 20px; border: 1px solid var(--border-color); border-radius: 8px;
+        background: var(--bg-secondary); cursor: pointer; text-align: left;
+        font-family: inherit; color: var(--text-main); position: relative;
+        transition: border-color var(--transition-speed);
+    }
+    button.source-card:hover { border-color: var(--primary-blue); }
+    .source-card-disabled {
+        cursor: not-allowed; opacity: 0.55;
+    }
+    .source-card-disabled:hover { border-color: var(--border-color); }
+    .source-icon { font-size: 1.8rem; }
+    .source-title { font-size: 1rem; font-weight: 700; color: var(--text-primary); }
+    .source-desc { font-size: 0.85rem; color: var(--text-secondary); }
+    .source-soon-badge {
+        position: absolute; top: 12px; right: 12px;
+        background: var(--hover-bg); border: 1px solid var(--border-color);
+        color: var(--text-secondary); font-size: 0.7rem; font-weight: 700;
+        text-transform: uppercase; padding: 3px 8px; border-radius: 10px;
+    }
+
+    .back-btn {
+        padding: 8px 16px; border: 1px solid var(--border-color); border-radius: 6px;
+        background: var(--bg-secondary); color: var(--text-secondary);
+        cursor: pointer; font-size: 0.9rem; font-weight: 600; font-family: inherit;
+    }
+    .back-btn:hover { border-color: var(--primary-blue); color: var(--text-primary); }
+
+    /* Stage 3: form */
+    .ir-form { display: flex; flex-direction: column; gap: 20px; }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-group label { font-size: 0.9rem; font-weight: 600; color: var(--text-secondary); }
+    .form-group input, .form-group textarea {
+        padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;
+        background: var(--bg-secondary); color: var(--text-main);
+        font-size: 0.95rem; font-family: inherit;
+    }
+    .form-group input:focus, .form-group textarea:focus {
+        outline: none; border-color: var(--primary-blue);
+        box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.2);
+    }
+    #irName { max-width: 600px; }
+    .points-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    #irPoints { width: 160px; }
+    .points-helper { font-size: 0.85rem; color: var(--text-secondary); font-style: italic; }
+    #resumeAutoSum { font-size: 0.8rem; }
+    .ir-submit-row {
+        display: flex; justify-content: flex-end; align-items: center;
+        gap: 15px; margin-top: 20px;
+    }
+
+    /* Attacks table header: title + count badge on one clean line */
+    .attack-table-header { margin-bottom: 10px; }
+    .attack-table-title {
+        display: flex; align-items: center; gap: 10px;
+        flex-wrap: nowrap; margin-bottom: 4px;
+    }
+    .attack-table-title h3 { margin: 0; white-space: nowrap; }
+    .attack-count-badge {
+        display: inline-flex; align-items: center; flex-shrink: 0;
+        white-space: nowrap;
+        background: var(--primary-blue); color: white;
+        padding: 3px 12px; border-radius: 12px;
+        font-size: 0.75rem; font-weight: 700; line-height: 1.4;
+    }
+
+    /* Attack reference table: fixed layout so long text truncates
+       instead of stretching the table past the viewport. */
+    .attack-ref-table { table-layout: fixed; width: 100%; }
+    .attack-ref-table .timestamp-cell { white-space: nowrap; font-size: 0.85rem; }
+    .attack-pts-input {
+        width: 110px; padding: 6px 8px; border: 1px solid var(--border-color);
+        border-radius: 4px; background: var(--bg-secondary);
+        color: var(--text-main); font-size: 0.9rem;
+    }
+    .attack-pts-input:focus {
+        outline: none; border-color: var(--primary-blue);
+        box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.2);
+    }
+    .status-badge {
+        padding: 4px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 600;
+        background-color: var(--hover-bg); color: var(--text-primary);
+        border: 1px solid var(--border-color);
+    }
+    .status-unref { color: #198754; border-color: rgba(25, 135, 84, 0.4); }
+    .ref-warning {
+        color: var(--primary-orange); font-size: 0.8rem; font-weight: 600;
+        display: inline-block; max-width: 100%;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        vertical-align: middle;
+    }
+    code {
+        background: var(--hover-bg); padding: 2px 6px; border-radius: 4px;
+        font-size: 0.9em; color: var(--primary-orange);
+    }
+
+    /* Truncating cell content (long IR filenames etc.) */
+    .ellip {
+        display: inline-block; vertical-align: middle;
+        max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+        white-space: nowrap; cursor: default;
+    }
+    .ir-name-ellip { max-width: 340px; }
+    .attack-desc-ellip { max-width: 260px; }
+    .ir-ref-code {
+        max-width: 90px; overflow: hidden; text-overflow: ellipsis;
+        white-space: nowrap; display: inline-block; vertical-align: middle;
+    }
+
+    /* Pronounced divider between unreferenced and referenced groups */
+    .attack-group-separator td {
+        padding: 10px 16px;
+        background: rgba(253, 126, 20, 0.10);
+        border-top: 2px solid var(--primary-orange);
+        border-bottom: 2px solid var(--primary-orange);
+        color: var(--primary-orange);
+        font-size: 0.8rem; font-weight: 700;
+        text-transform: uppercase; letter-spacing: 0.6px;
+        text-align: center;
+        white-space: normal;
+    }
+
+    /* Metadata button (mirrors redAttack.html) */
+    .metadata-btn {
+        background: none; border: none; cursor: pointer; font-size: 1.1rem;
+        padding: 4px 8px; transition: transform 0.2s, opacity 0.2s; opacity: 0.6;
+        color: var(--text-secondary);
+    }
+    .metadata-btn:hover { transform: scale(1.2); opacity: 1; color: var(--primary-blue); }
+
+    /* Modals (mirrors redAttack.html) */
+    .modal {
+        display: none; position: fixed; z-index: 1000; left: 0; top: 0;
+        width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5);
+        backdrop-filter: blur(4px); align-items: center; justify-content: center;
+    }
+    .modal-content {
+        background-color: var(--bg-content); margin: auto; padding: 0;
+        border: 1px solid var(--border-color); border-radius: 8px;
+        width: 80%; max-width: 800px; max-height: 80vh;
+        display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    }
+    .modal-header {
+        padding: 15px 20px; border-bottom: 1px solid var(--border-color);
+        display: flex; justify-content: space-between; align-items: center;
+        background-color: var(--hover-bg); border-radius: 8px 8px 0 0;
+    }
+    .modal-header h3 { margin: 0; font-size: 1.2rem; color: var(--text-primary); }
+    .close-modal { color: var(--text-secondary); font-size: 28px; font-weight: bold;
+                   cursor: pointer; transition: color 0.2s; }
+    .close-modal:hover, .close-modal:focus { color: var(--danger-color); text-decoration: none; }
+    .modal-body { padding: 20px; overflow-y: auto; flex-grow: 1; }
+    .missing-list {
+        list-style: none; padding: 0; margin: 15px 0;
+    }
+    .missing-list li {
+        padding: 8px 12px; border: 1px solid var(--border-color);
+        border-radius: 6px; margin-bottom: 6px;
+        background: var(--hover-bg); font-size: 0.9rem;
+    }
+    .modal-actions {
+        display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;
+    }
+
+    @media (max-width: 768px) {
+        .modal-content { width: 95%; max-height: 90vh; }
+        .stage2-header { flex-direction: column; align-items: flex-start; }
+        /* Let truncation adapt to narrow screens rather than forcing
+           horizontal scroll on phones/tablets. */
+        .ir-name-ellip, .attack-desc-ellip { max-width: 160px; }
+    }
+</style>
+{% endblock %}

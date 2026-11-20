@@ -172,7 +172,7 @@ def get_user_roles(user_groups):
 # --- Routes ---
 
 # Import Routes
-from routes import team_bp, ext_accounts_bp, scores_bp, quotient_bp, user_api_keys_bp, api_bp, red_config_bp, orange_config_bp, red_attack_bp, drop_flag_bp, scorecard_bp
+from routes import team_bp, ext_accounts_bp, scores_bp, quotient_bp, user_api_keys_bp, api_bp, red_config_bp, orange_config_bp, red_attack_bp, drop_flag_bp, scorecard_bp, ir_bp
 app.register_blueprint(team_bp)
 app.register_blueprint(ext_accounts_bp)
 app.register_blueprint(scores_bp)
@@ -184,6 +184,7 @@ app.register_blueprint(orange_config_bp)
 app.register_blueprint(red_attack_bp)
 app.register_blueprint(drop_flag_bp)
 app.register_blueprint(scorecard_bp)
+app.register_blueprint(ir_bp)
 
 # Exempt from CSRF token requirement
 csrf.exempt(api_bp)

@@ -5,6 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vantage - {{ compTitle }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script>
+        (function () {
+            var theme = localStorage.getItem('theme');
+            if (!theme) {
+                theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            }
+            document.documentElement.setAttribute('data-theme', theme);
+        })();
+    </script>
 </head>
 <body>
 
@@ -108,7 +117,7 @@
                     <ul class="submenu{% if red_team_page %} open{% endif %}">
                         <li class="submenu-item"><a href="{{ url_for('red_config.red_config') }}" class="submenu-link">Configuration</a></li>
                         <li class="submenu-item"><a href="{{ url_for('red_attack.red_attacks') }}" class="submenu-link">Attacks</a></li>
-                        <li class="submenu-item"><a href="#" class="submenu-link">Incident Response</a></li>
+                        <li class="submenu-item"><a href="{{ url_for('incident_response.score_irs') }}" class="submenu-link">Incident Response</a></li>
                         <li class="submenu-item"><a href="#" class="submenu-link">Adjustments</a></li>
                     </ul>
                 </li>
@@ -248,6 +257,7 @@
 
         function setTheme(theme) {
             body.setAttribute('data-theme', theme);
+            document.documentElement.setAttribute('data-theme', theme);
             if (theme === 'dark') {
                 themeIcon.textContent = '☀️';
                 themeText.textContent = 'Light';
