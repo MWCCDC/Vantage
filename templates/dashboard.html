@@ -21,20 +21,29 @@
                     </p>
                     <p class="stat-subtitle">
                         {% if quotient_celery_status and quotient_celery_status.enabled %}
-                        T: ✅ / 
+                        T: ✅ /
                             {% if sync_scores_enabled %}
-                            S: ✅ / 
+                            S: ✅ /
                             {% else %}
                             S: ❌ /
                             {% endif %}
                         {% else %}
-                        T: ❌ / 
+                        T: ❌ /
                         {% endif %}
-                        Engine: 
-                        {% if quotient_status.running %}
-                            <span class="status-ok">Running</span>
+                        Engine:
+                        {% if quotient_status.engine_name %}
+                            <span title="Engine ID {{ quotient_status.engine_id }}">{{ quotient_status.engine_name }}</span>
+                            {% if quotient_status.running %}
+                                (<span class="status-ok">Running</span>)
+                            {% else %}
+                                (<span class="status-warning">Paused</span>)
+                            {% endif %}
                         {% else %}
-                            <span class="status-warning">Paused</span>
+                            {% if quotient_status.running %}
+                                <span class="status-ok">Running</span>
+                            {% else %}
+                                <span class="status-warning">Paused</span>
+                            {% endif %}
                         {% endif %}
                     </p>
                 {% else %}
@@ -61,7 +70,7 @@
             <div class="stat-icon">🔄</div>
             <div class="stat-content">
                 <h3>Last Mantis Sync</h3>
-                <p class="stat-value">2026-04-07 14:30:08 UTC</p>
+                <p class="stat-value">N/A</p>
             </div>
         </div>
 

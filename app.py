@@ -123,29 +123,63 @@ oidc = oauth.register(
 
 # Get Quotient status from valkey
 def get_valkey_status():
-    """Fetch Quotient status from Valkey"""
+    """Fetch Quotient status from Valkey.
+
+    Scans all configured engines' status blobs and returns the one that
+    synced most recently, so the dashboard reflects the freshest data.
+    """
     try:
         valkey_client = get_valkey_client()
-        status_data = valkey_client.get("quotient:status")
-        
-        if status_data:
-            parsed = json.loads(status_data)
+
+        # Load engine config for names
+        engines = []
+        engines_raw = valkey_client.get("quotient:engines")
+        if engines_raw:
+            engines = json.loads(engines_raw)
+
+        best = None
+        for engine in engines:
+            raw = valkey_client.get(f"quotient:engine{engine['id']}:status")
+            if not raw:
+                continue
+            try:
+                parsed = json.loads(raw)
+                data = json.loads(parsed['data'])
+                synced_at = parsed.get('synced_at')
+            except (json.JSONDecodeError, KeyError, TypeError):
+                continue
+            if not synced_at:
+                continue
+            if best is None or synced_at > best['synced_at']:
+                best = {
+                    'synced_at': synced_at,
+                    'running': data.get('running', False),
+                    'status': "Running" if data.get('running', False) else "Paused",
+                    'engine_id': engine['id'],
+                    'engine_name': engine.get('name', f"Engine {engine['id']}"),
+                    'raw_data': data
+                }
+
+        if best:
+            return best
+
+        # Legacy fallback: old pre-engine-mode key
+        legacy_raw = valkey_client.get("quotient:status")
+        if legacy_raw:
+            parsed = json.loads(legacy_raw)
             data = json.loads(parsed['data'])
-            synced_at = parsed['synced_at']
-            
-            # Determine running status
             running = data.get('running', False)
-            status = "Running" if running else "Paused"
-            
             return {
-                'synced_at': synced_at,
+                'synced_at': parsed.get('synced_at'),
                 'running': running,
-                'status': status,
+                'status': "Running" if running else "Paused",
+                'engine_id': None,
+                'engine_name': "Legacy sync",
                 'raw_data': data
             }
     except Exception as e:
         app.logger.error(f"Failed to fetch Valkey status: {str(e)}")
-    
+
     return None
 
 # --- Role Mapping Logic ---
